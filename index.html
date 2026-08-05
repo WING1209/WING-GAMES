@@ -3,121 +3,271 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>パズルボブル風ゲーム</title>
+    <title>パズルボブル風ゲーム 強化版（ステージ制・ドラッグ発射）</title>
     <style>
         body {
             margin: 0;
             padding: 0;
             background: #1a1a1a;
             color: #fff;
-            font-family: sans-serif;
+            font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             height: 100vh;
             overflow: hidden;
-            touch-action: none;
+            touch-action: none; /* 画面スクロール防止 */
+            user-select: none; /* テキスト選択防止 */
         }
         canvas {
             background: #222;
-            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            box-shadow: 0 0 20px rgba(0,0,0,0.7);
             max-width: 100%;
-            height: auto;
+            max-height: 100vh;
+            display: block;
         }
-        #ui {
-            margin-top: 10px;
-            font-size: 18px;
-            font-weight: bold;
+        #ui-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none; /* UIはクリックを透過させる */
+        }
+        .ui-box {
+            background: rgba(0,0,0,0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 16px;
+            pointer-events: auto;
         }
     </style>
 </head>
 <body>
 
+    <div id="ui-overlay">
+        <div class="ui-box">ステージ: <span id="stage-text">1</span>/10</div>
+        <div class="ui-box">スコア: <span id="score-text">0</span></div>
+    </div>
     <canvas id="gameCanvas" width="400" height="600"></canvas>
-    <div id="ui">スコア: <span id="score">0</span></div>
 
 <script>
+// --- 定数と設定 ---
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-const ROWS = 10;
+const ROWS = 12; // 行数を少し増やした
 const COLS = 8;
 const RADIUS = 20;
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3); // ハニカム構造の高さ
-
 const COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
+const UNBREAKABLE_COLOR = '#333'; // 消えないブロックの色
 
+// --- ゲーム状態 ---
 let grid = [];
 let score = 0;
-let currentBubble = null;
-let nextColor = getRandomColor();
+let currentStage = 1;
+const maxStages = 10;
+
+// 発射台関連
 let shooterX = canvas.width / 2;
-let shooterY = canvas.height - 40;
-let isMoving = false;
+let shooterY = canvas.height - 50; // 少し上に
 let bulletX = shooterX;
 let bulletY = shooterY;
 let bulletVX = 0;
 let bulletVY = 0;
 let bulletColor = getRandomColor();
+let nextColor = getRandomColor();
+
+// 操作（ドラッグ）関連
+let isDragging = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let pullX = 0;
+let pullY = 0;
+const MAX_PULL_DISTANCE = 150; // 最大引っ張り距離（威力上限）
+const MIN_SPEED = 8; // 最小発射速度
+const MAX_SPEED = 25; // 最大発射速度
 
 function getRandomColor() {
     return COLORS[Math.floor(Math.random() * COLORS.length)];
 }
 
-// グリッド初期化
-function initGrid() {
+// --- ゲームロジック ---
+
+// グリッド初期化とステージ配置
+function initGridForStage(stage) {
     grid = [];
     for (let r = 0; r < ROWS; r++) {
         let row = [];
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
-            // 上部数行だけ初期配置する
-            let color = r < 3 ? getRandomColor() : null;
-            row.push(color);
+            row.push(null); // 最初はすべて空
         }
         grid.push(row);
     }
+
+    // 消えないブロックの数を計算 (ステージ1で2個、2で4個、3で8個... )
+    let unbreakableCount = Math.min(COLS * 3, 2 * Math.pow(2, stage - 1));
+
+    // ランダムな場所に消えないブロックを配置
+    for (let i = 0; i < unbreakableCount; i++) {
+        let r = Math.floor(Math.random() * 4); // 上部4行に配置
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        let c = Math.floor(Math.random() * colsInRow);
+        grid[r][c] = UNBREAKABLE_COLOR;
+    }
+
+    // 通常の色のバブルを配置（上部6行程度）
+    for (let r = 0; r < Math.min(ROWS, stage + 2); r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] === null && Math.random() < 0.6) { // 空いていたらランダムに配置
+                grid[r][c] = getRandomColor();
+            }
+        }
+    }
 }
 
+// 次の弾を準備
 function spawnBullet() {
     bulletColor = nextColor;
     nextColor = getRandomColor();
-    bulletX = shooterX;
-    bulletY = shooterY;
+    resetBulletPos();
     isMoving = false;
 }
 
-initGrid();
+function resetBulletPos() {
+    bulletX = shooterX;
+    bulletY = shooterY;
+    bulletVX = 0;
+    bulletVY = 0;
+    pullX = 0;
+    pullY = 0;
+}
+
+// クリアチェック
+function checkClearCondition() {
+    let hasBreakable = false;
+    for (let r = 0; r < grid.length; r++) {
+        for (let c = 0; c < grid[r].length; c++) {
+            if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR) {
+                hasBreakable = true;
+                break;
+            }
+        }
+        if (hasBreakable) break;
+    }
+
+    if (!hasBreakable) {
+        // クリア！
+        if (currentStage < maxStages) {
+            currentStage++;
+            alert(`ステージ ${currentStage-1} クリア！`);
+            initGridForStage(currentStage);
+            spawnBullet();
+        } else {
+            alert('全ステージクリア！おめでとうございます！');
+            currentStage = 1;
+            initGridForStage(currentStage);
+            spawnBullet();
+            score = 0;
+        }
+        updateUIScores();
+    }
+}
+
+function updateUIScores() {
+    document.getElementById('stage-text').innerText = currentStage;
+    document.getElementById('score-text').innerText = score;
+}
+
+// 初期化
+initGridForStage(currentStage);
 spawnBullet();
+updateUIScores();
 
-// マウス・タッチ操作
-function handleInput(clientX, clientY) {
-    if (isMoving) return;
+// --- 入力処理 (タッチ・マウス) ---
+
+function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+    let clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    let clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+}
 
-    let angle = Math.atan2(y - shooterY, x - shooterX);
-    // 上方向のみに制限
+canvas.addEventListener('mousedown', onPointerStart);
+canvas.addEventListener('touchstart', onPointerStart, { passive: false });
+canvas.addEventListener('mousemove', onPointerMove);
+canvas.addEventListener('touchmove', onPointerMove, { passive: false });
+canvas.addEventListener('mouseup', onPointerEnd);
+canvas.addEventListener('touchend', onPointerEnd);
+
+function onPointerStart(e) {
+    if (isMoving) return; // 発射中は操作無効
+    const pos = getTouchPos(e);
+    // 発射台付近をタッチした時のみ開始
+    if (Math.hypot(pos.x - shooterX, pos.y - shooterY) < RADIUS * 3) {
+        isDragging = true;
+        dragStartX = pos.x;
+        dragStartY = pos.y;
+        pullX = 0;
+        pullY = 0;
+        e.preventDefault();
+    }
+}
+
+function onPointerMove(e) {
+    if (!isDragging) return;
+    e.preventDefault();
+    const pos = getTouchPos(e);
+    
+    // 引っ張ったベクトルを計算（下方向に引っ張るほどパワーが溜まる）
+    let dx = pos.x - dragStartX;
+    let dy = pos.y - dragStartY;
+
+    // 上方向には引っ張れない（発射台より下のみ）
+    if (dy < 0) dy = 0;
+
+    // 距離を制限
+    let dist = Math.hypot(dx, dy);
+    if (dist > MAX_PULL_DISTANCE) {
+        let angle = Math.atan2(dy, dx);
+        dx = Math.cos(angle) * MAX_PULL_DISTANCE;
+        dy = Math.sin(angle) * MAX_PULL_DISTANCE;
+    }
+
+    pullX = dx;
+    pullY = dy;
+}
+
+function onPointerEnd(e) {
+    if (!isDragging) return;
+    isDragging = false;
+    
+    // 引っ張った方向と距離から速度を決定
+    let power = Math.min(1.0, Math.hypot(pullX, pullY) / MAX_PULL_DISTANCE);
+    let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
+    
+    // 角度（pullX, pullYの向きとは逆方向に飛ばす）
+    let angle = Math.atan2(pullY, pullX);
+    
+    // 上方向（角度が -PI 〜 0 の間）のみ許可
     if (angle > -Math.PI && angle < 0) {
-        let speed = 10;
         bulletVX = Math.cos(angle) * speed;
         bulletVY = Math.sin(angle) * speed;
         isMoving = true;
     }
+    
+    pullX = 0;
+    pullY = 0;
 }
 
-canvas.addEventListener('click', (e) => handleInput(e.clientX, e.clientY));
-canvas.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    if (e.touches.length > 0) {
-        handleInput(e.touches[0].clientX, e.touches[0].clientY);
-    }
-}, { passive: false });
+// --- 座標変換と衝突判定 ---
 
-// 座標からグリッドインデックスを計算
 function getGridCoords(x, y) {
     let r = Math.round((y - RADIUS) / ROW_HEIGHT);
     r = Math.max(0, Math.min(ROWS - 1, r));
@@ -135,17 +285,15 @@ function getPixelCoords(r, c) {
     return { x, y };
 }
 
-// 同じ色のつながりを探索 (フラッドフィル)
+// --- 連結探索と落下処理 ---
+
 function findConnected(r, c, color, visited = new Set()) {
     let key = `${r},${c}`;
-    if (visited.has(key)) return [];
-    if (r < 0 || r >= grid.length || c < 0 || c >= grid[r].length) return [];
+    if (visited.has(key) || r < 0 || r >= ROWS || c < 0) return [];
     if (grid[r][c] !== color) return [];
 
     visited.add(key);
     let matches = [{ r, c }];
-
-    // 隣接する6方向のオフセット
     let neighbors = (r % 2 === 0) ? 
         [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] :
         [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
@@ -156,44 +304,40 @@ function findConnected(r, c, color, visited = new Set()) {
     return matches;
 }
 
-// 孤立したバブルの落下判定
 function removeFloating() {
     let visited = new Set();
-    // 天井（行0）に繋がっているものを探索
     for (let c = 0; c < grid[0].length; c++) {
-        if (grid[0][c] !== null) {
-            markConnected(0, c, grid[0][c], visited);
-        }
+        if (grid[0][c] !== null) markConnected(0, c, grid[0][c], visited);
     }
-
-    // 訪問されなかったものを消去
-    for (let r = 0; r < grid.length; r++) {
+    let droppedCount = 0;
+    for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < grid[r].length; c++) {
             if (grid[r][c] !== null && !visited.has(`${r},${c}`)) {
-                grid[r][c] = null;
-                score += 50; // 落下ボーナス
+                if (grid[r][c] !== UNBREAKABLE_COLOR) {
+                    grid[r][c] = null;
+                    droppedCount++;
+                }
             }
         }
     }
+    if(droppedCount > 0) score += droppedCount * 20; // 落下ボーナス
 }
 
 function markConnected(r, c, color, visited) {
     let key = `${r},${c}`;
-    if (visited.has(key)) return;
-    if (r < 0 || r >= grid.length || c < 0 || c >= grid[r].length) return;
+    if (visited.has(key) || r < 0 || r >= ROWS || c < 0) return;
     if (grid[r][c] !== color) return;
-
     visited.add(key);
     let neighbors = (r % 2 === 0) ? 
         [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] :
         [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
-
-    for (let n of neighbors) {
-        markConnected(r + n[0], c + n[1], color, visited);
-    }
+    for (let n of neighbors) markConnected(r + n[0], c + n[1], color, visited);
 }
 
-// メインループ
+// --- メインループ ---
+
+let isMoving = false;
+
 function update() {
     if (isMoving) {
         bulletX += bulletVX;
@@ -215,86 +359,10 @@ function update() {
         }
 
         // 既存のバブルとの衝突判定
-        for (let r = 0; r < grid.length; r++) {
-            for (let c = 0; c < grid[r].length; c++) {
+        for (let r = 0; r < ROWS; r++) {
+            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+            for (let c = 0; c < colsInRow; c++) {
                 if (grid[r][c] !== null) {
                     let pos = getPixelCoords(r, c);
                     let dist = Math.hypot(bulletX - pos.x, bulletY - pos.y);
-                    if (dist < DIAMETER - 2) {
-                        snapBullet();
-                        return;
-                    }
-                }
-            }
-        }
-    }
-}
-
-function snapBullet() {
-    isMoving = false;
-    let coords = getGridCoords(bulletX, bulletY);
-    
-    // 空いている場所を探す（重なった場所が埋まっていれば近くの空きへ）
-    if (coords.r < grid.length && grid[coords.r][coords.c] === null) {
-        grid[coords.r][coords.c] = bulletColor;
-        
-        // 3つ以上揃ったかチェック
-        let matches = findConnected(coords.r, coords.c, bulletColor);
-        if (matches.length >= 3) {
-            for (let m of matches) {
-                grid[m.r][m.c] = null;
-                score += 10;
-            }
-            removeFloating();
-        }
-    }
-    spawnBullet();
-}
-
-function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // グリッド描画
-    for (let r = 0; r < grid.length; r++) {
-        for (let c = 0; c < grid[r].length; c++) {
-            if (grid[r][c] !== null) {
-                let pos = getPixelCoords(r, c);
-                drawBubble(pos.x, pos.y, grid[r][c]);
-            }
-        }
-    }
-
-    // 発射弾の描画
-    drawBubble(bulletX, bulletY, bulletColor);
-
-    // 次の弾の色（左下などに表示）
-    drawBubble(30, canvas.height - 30, nextColor);
-    ctx.fillStyle = "#fff";
-    ctx.font = "12px sans-serif";
-    ctx.fillText("NEXT", 15, canvas.height - 60);
-
-    document.getElementById('score').innerText = score;
-}
-
-function drawBubble(x, y, color) {
-    ctx.beginPath();
-    ctx.arc(x, y, RADIUS - 1, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.closePath();
-}
-
-function loop() {
-    update();
-    draw();
-    requestAnimationFrame(loop);
-}
-
-loop();
-</script>
-
-</body>
-</html>
+                    if (dist < DIAMETER - 4)
