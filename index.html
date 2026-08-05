@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>パズルボブル風ゲーム</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            color: #fff;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            background: #222;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            max-width: 100%;
+            height: auto;
+        }
+        #ui {
+            margin-top: 10px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas" width="400" height="600"></canvas>
+    <div id="ui">スコア: <span id="score">0</span></div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const ROWS = 10;
+const COLS = 8;
+const RADIUS = 20;
+const DIAMETER = RADIUS * 2;
+const ROW_HEIGHT = RADIUS * Math.sqrt(3); // ハニカム構造の高さ
+
+const COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
+
+let grid = [];
+let score = 0;
+let currentBubble = null;
+let nextColor = getRandomColor();
+let shooterX = canvas.width / 2;
+let shooterY = canvas.height - 40;
+let isMoving = false;
+let bulletX = shooterX;
+let bulletY = shooterY;
+let bulletVX = 0;
+let bulletVY = 0;
+let bulletColor = getRandomColor();
+
+function getRandomColor() {
+    return COLORS[Math.floor(Math.random() * COLORS.length)];
+}
+
+// グリッド初期化
+function initGrid() {
+    grid = [];
+    for (let r = 0; r < ROWS; r++) {
+        let row = [];
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            // 上部数行だけ初期配置する
+            let color = r < 3 ? getRandomColor() : null;
+            row.push(color);
+        }
+        grid.push(row);
+    }
+}
+
+function spawnBullet() {
+    bulletColor = nextColor;
+    nextColor = getRandomColor();
+    bulletX = shooterX;
+    bulletY = shooterY;
+    isMoving = false;
+}
+
+initGrid();
+spawnBullet();
+
+// マウス・タッチ操作
+function handleInput(clientX, clientY) {
+    if (isMoving) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+
+    let angle = Math.atan2(y - shooterY, x - shooterX);
+    // 上方向のみに制限
+    if (angle > -Math.PI && angle < 0) {
+        let speed = 10;
+        bulletVX = Math.cos(angle) * speed;
+        bulletVY = Math.sin(angle) * speed;
+        isMoving = true;
+    }
+}
+
+canvas.addEventListener('click', (e) => handleInput(e.clientX, e.clientY));
+canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (e.touches.length > 0) {
+        handleInput(e.touches[0].clientX, e.touches[0].clientY);
+    }
+}, { passive: false });
+
+// 座標からグリッドインデックスを計算
+function getGridCoords(x, y) {
+    let r = Math.round((y - RADIUS) / ROW_HEIGHT);
+    r = Math.max(0, Math.min(ROWS - 1, r));
+    let offsetX = (r % 2 === 1) ? RADIUS : 0;
+    let c = Math.round((x - RADIUS - offsetX) / DIAMETER);
+    let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+    c = Math.max(0, Math.min(colsInRow - 1, c));
+    return { r, c };
+}
+
+function getPixelCoords(r, c) {
+    let offsetX = (r % 2 === 1) ? RADIUS : 0;
+    let x = c * DIAMETER + RADIUS + offsetX;
+    let y = r * ROW_HEIGHT + RADIUS;
+    return { x, y };
+}
+
+// 同じ色のつながりを探索 (フラッドフィル)
+function findConnected(r, c, color, visited = new Set()) {
+    let key = `${r},${c}`;
+    if (visited.has(key)) return [];
+    if (r < 0 || r >= grid.length || c < 0 || c >= grid[r].length) return [];
+    if (grid[r][c] !== color) return [];
+
+    visited.add(key);
+    let matches = [{ r, c }];
+
+    // 隣接する6方向のオフセット
+    let neighbors = (r % 2 === 0) ? 
+        [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] :
+        [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+
+    for (let n of neighbors) {
+        matches = matches.concat(findConnected(r + n[0], c + n[1], color, visited));
+    }
+    return matches;
+}
+
+// 孤立したバブルの落下判定
+function removeFloating() {
+    let visited = new Set();
+    // 天井（行0）に繋がっているものを探索
+    for (let c = 0; c < grid[0].length; c++) {
+        if (grid[0][c] !== null) {
+            markConnected(0, c, grid[0][c], visited);
+        }
+    }
+
+    // 訪問されなかったものを消去
+    for (let r = 0; r < grid.length; r++) {
+        for (let c = 0; c < grid[r].length; c++) {
+            if (grid[r][c] !== null && !visited.has(`${r},${c}`)) {
+                grid[r][c] = null;
+                score += 50; // 落下ボーナス
+            }
+        }
+    }
+}
+
+function markConnected(r, c, color, visited) {
+    let key = `${r},${c}`;
+    if (visited.has(key)) return;
+    if (r < 0 || r >= grid.length || c < 0 || c >= grid[r].length) return;
+    if (grid[r][c] !== color) return;
+
+    visited.add(key);
+    let neighbors = (r % 2 === 0) ? 
+        [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] :
+        [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+
+    for (let n of neighbors) {
+        markConnected(r + n[0], c + n[1], color, visited);
+    }
+}
+
+// メインループ
+function update() {
+    if (isMoving) {
+        bulletX += bulletVX;
+        bulletY += bulletVY;
+
+        // 壁反射
+        if (bulletX - RADIUS < 0) {
+            bulletX = RADIUS;
+            bulletVX *= -1;
+        } else if (bulletX + RADIUS > canvas.width) {
+            bulletX = canvas.width - RADIUS;
+            bulletVX *= -1;
+        }
+
+        // 天井に到達
+        if (bulletY - RADIUS <= 0) {
+            snapBullet();
+            return;
+        }
+
+        // 既存のバブルとの衝突判定
+        for (let r = 0; r < grid.length; r++) {
+            for (let c = 0; c < grid[r].length; c++) {
+                if (grid[r][c] !== null) {
+                    let pos = getPixelCoords(r, c);
+                    let dist = Math.hypot(bulletX - pos.x, bulletY - pos.y);
+                    if (dist < DIAMETER - 2) {
+                        snapBullet();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+function snapBullet() {
+    isMoving = false;
+    let coords = getGridCoords(bulletX, bulletY);
+    
+    // 空いている場所を探す（重なった場所が埋まっていれば近くの空きへ）
+    if (coords.r < grid.length && grid[coords.r][coords.c] === null) {
+        grid[coords.r][coords.c] = bulletColor;
+        
+        // 3つ以上揃ったかチェック
+        let matches = findConnected(coords.r, coords.c, bulletColor);
+        if (matches.length >= 3) {
+            for (let m of matches) {
+                grid[m.r][m.c] = null;
+                score += 10;
+            }
+            removeFloating();
+        }
+    }
+    spawnBullet();
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // グリッド描画
+    for (let r = 0; r < grid.length; r++) {
+        for (let c = 0; c < grid[r].length; c++) {
+            if (grid[r][c] !== null) {
+                let pos = getPixelCoords(r, c);
+                drawBubble(pos.x, pos.y, grid[r][c]);
+            }
+        }
+    }
+
+    // 発射弾の描画
+    drawBubble(bulletX, bulletY, bulletColor);
+
+    // 次の弾の色（左下などに表示）
+    drawBubble(30, canvas.height - 30, nextColor);
+    ctx.fillStyle = "#fff";
+    ctx.font = "12px sans-serif";
+    ctx.fillText("NEXT", 15, canvas.height - 60);
+
+    document.getElementById('score').innerText = score;
+}
+
+function drawBubble(x, y, color) {
+    ctx.beginPath();
+    ctx.arc(x, y, RADIUS - 1, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.closePath();
+}
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+
+</body>
+</html>
