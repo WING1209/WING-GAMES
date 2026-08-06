@@ -3,29 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>パズルボブル風 フレンドバトル対応版</title>
+    <title>パズルボブル風 スマホ最適化版</title>
     <style>
+        * {
+            box-sizing: border-box;
+            -webkit-touch-callout: none; /* 長押しメニューの無効化 */
+            -webkit-user-select: none;   /* テキスト選択の無効化 */
+            user-select: none;
+        }
         body {
             margin: 0;
             padding: 0;
             background: #111;
             color: #fff;
-            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             height: 100vh;
+            height: 100dvh; /* スマホのアドレスバー対策 */
             overflow: hidden;
-            touch-action: none;
-            user-select: none;
+            touch-action: none; /* スマホのデフォルトスクロールを禁止 */
         }
         #game-container {
             position: relative;
-            width: 100%;
-            height: 100%;
-            max-width: 450px;
-            max-height: 850px;
+            width: 100vw;
+            height: 100dvh;
+            max-width: 480px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -39,82 +44,76 @@
             height: 100%;
             object-fit: contain;
             z-index: 1;
+            touch-action: none;
         }
-        /* オーバーレイ共通 */
+        /* オーバーレイUI共通 */
         .overlay-screen {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(17, 17, 17, 0.92);
+            background: rgba(17, 17, 17, 0.94);
             display: none;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 20px;
-            box-sizing: border-box;
+            padding: 24px;
             z-index: 100;
             text-align: center;
         }
         .overlay-screen h2 {
             color: #ffcc00;
-            font-size: 26px;
-            margin-bottom: 15px;
+            font-size: 28px;
+            margin-bottom: 20px;
         }
         .menu-btn {
             background: #ffcc00;
             color: #111;
             border: none;
-            padding: 14px 28px;
-            border-radius: 10px;
+            padding: 16px 20px;
+            border-radius: 12px;
             font-weight: bold;
-            font-size: 16px;
-            margin: 8px 0;
-            width: 80%;
-            max-width: 260px;
+            font-size: 18px;
+            margin: 10px 0;
+            width: 85%;
+            max-width: 280px;
             cursor: pointer;
-            pointer-events: auto;
+            active-transform: scale(0.96);
         }
-        .menu-btn.sub {
-            background: #4da6ff;
-            color: #fff;
+        .menu-btn:active {
+            transform: scale(0.96);
+            opacity: 0.9;
         }
-        .menu-btn.gray {
-            background: #555;
-            color: #fff;
-        }
-        .menu-btn.danger {
-            background: #ff4d4d;
-            color: #fff;
-        }
+        .menu-btn.sub { background: #4da6ff; color: #fff; }
+        .menu-btn.gray { background: #555; color: #fff; }
+        .menu-btn.danger { background: #ff4d4d; color: #fff; }
+        
         input.room-code-input {
             background: #222;
             border: 2px solid #ffcc00;
             color: #fff;
-            font-size: 24px;
+            font-size: 28px;
             text-align: center;
-            padding: 10px;
-            border-radius: 8px;
-            width: 150px;
+            padding: 12px;
+            border-radius: 10px;
+            width: 160px;
             margin: 15px 0;
-            letter-spacing: 5px;
+            letter-spacing: 6px;
         }
-        /* スクロールコメント通知バー */
         #ticker-container {
             position: absolute;
-            bottom: 40px;
+            bottom: 30px;
             width: 100%;
-            background: rgba(255, 77, 77, 0.9);
+            background: rgba(255, 77, 77, 0.95);
             color: #fff;
-            padding: 8px 0;
+            padding: 10px 0;
             overflow: hidden;
             white-space: nowrap;
             display: none;
             z-index: 200;
             font-weight: bold;
             font-size: 16px;
-            box-shadow: 0 -2px 10px rgba(0,0,0,0.5);
         }
         .ticker-text {
             display: inline-block;
@@ -153,36 +152,36 @@
         <!-- ③ ゲスト用 合言葉入力画面 -->
         <div id="screen-guest-join" class="overlay-screen">
             <h2>合言葉を入力</h2>
-            <p style="font-size: 13px; color: #ccc;">ホストから教わった4桁の数字を入力してね</p>
+            <p style="font-size: 14px; color: #ccc;">ホストから教わった4桁の数字を入力</p>
             <input type="number" id="input-room-code" class="room-code-input" maxlength="4" placeholder="0000">
             <br>
-            <button class="menu-btn" onclick="joinRoom()">ルームに入室</button>
+            <button class="menu-btn" onclick="joinRoom()">入室する</button>
             <button class="menu-btn gray" onclick="showScreen('screen-battle-menu')">もどる</button>
         </div>
 
         <!-- ④ ホスト用 待機・合言葉表示画面 -->
         <div id="screen-host-wait" class="overlay-screen">
             <h2>ルーム作成完了</h2>
-            <p style="font-size: 13px; color: #ccc;">以下の4桁を対戦相手に伝えてください</p>
-            <div id="display-room-code" style="font-size: 48px; color: #ffcc00; letter-spacing: 10px; margin: 20px 0; font-weight: bold;">----</div>
-            <p style="font-size: 12px; color: #888;">相手が入室するとバトルが自動で始まります...</p>
+            <p style="font-size: 14px; color: #ccc;">以下の4桁を相手に伝えてください</p>
+            <div id="display-room-code" style="font-size: 52px; color: #ffcc00; letter-spacing: 10px; margin: 20px 0; font-weight: bold;">----</div>
+            <p style="font-size: 13px; color: #888;">相手が入室するとバトルが始まります...</p>
             <button class="menu-btn gray" onclick="showScreen('screen-battle-menu')">キャンセル</button>
         </div>
 
-        <!-- ⑤ ひとりで遊ぶ：ステージクリア画面 -->
+        <!-- ⑤ ステージクリア画面 -->
         <div id="screen-stage-clear" class="overlay-screen">
             <h2>STAGE CLEAR!</h2>
-            <p id="clear-score-text" style="font-size: 16px; margin-bottom: 20px; color: #fff;"></p>
-            <button class="menu-btn sub" onclick="nextStageAction()">Next Stage ➔</button>
-            <button class="menu-btn gray" onclick="returnToTitle()">終了 (タイトルへ)</button>
+            <p id="clear-score-text" style="font-size: 18px; margin-bottom: 20px; color: #fff;"></p>
+            <button class="menu-btn sub" onclick="nextStageAction()">次のステージへ ➔</button>
+            <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ戻る</button>
         </div>
 
-        <!-- ⑥ ひとりで遊ぶ：ゲームオーバー画面 -->
+        <!-- ⑥ ゲームオーバー画面 -->
         <div id="screen-game-over" class="overlay-screen">
             <h2 style="color: #ff4d4d;">GAME OVER</h2>
-            <p id="gameover-score-text" style="font-size: 16px; margin-bottom: 20px; color: #fff;"></p>
-            <button class="menu-btn danger" onclick="retryStage()">再挑戦 🔄</button>
-            <button class="menu-btn gray" onclick="returnToTitle()">終了 (タイトルへ)</button>
+            <p id="gameover-score-text" style="font-size: 18px; margin-bottom: 20px; color: #fff;"></p>
+            <button class="menu-btn danger" onclick="retryStage()">もう一度挑戦 🔄</button>
+            <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ戻る</button>
         </div>
 
         <!-- スクロールコメント通知バー -->
@@ -191,10 +190,10 @@
         </div>
 
         <!-- 設定画面モーダル -->
-        <div id="settings-overlay" class="overlay-screen" style="justify-content: flex-start; padding-top: 30px;">
-            <h2>玉の画像カスタマイズ</h2>
-            <div id="settings-list" style="width: 100%; display: flex; flex-direction: column; align-items: center; max-height: 500px; overflow-y: auto;"></div>
-            <button class="menu-btn sub" style="margin-top: 15px;" onclick="closeSettings()">設定を保存して戻る</button>
+        <div id="settings-overlay" class="overlay-screen" style="justify-content: flex-start; padding-top: 40px;">
+            <h2>玉の画像カスタム</h2>
+            <div id="settings-list" style="width: 100%; display: flex; flex-direction: column; align-items: center; max-height: 480px; overflow-y: auto;"></div>
+            <button class="menu-btn sub" style="margin-top: 20px;" onclick="closeSettings()">保存して戻る</button>
         </div>
     </div>
 
@@ -215,7 +214,7 @@ const COLOR_NAMES = {
 };
 let customImages = {};
 const UNBREAKABLE_COLOR = '#fff';
-const TOP_MARGIN = 70;
+const TOP_MARGIN = 80; // スマホヘッダーをゆったり広めに確保
 
 let grid = [];
 let score = 0;
@@ -229,7 +228,7 @@ let roomCode = '';
 let gameState = 'title';
 
 let shooterX = canvas.width / 2;
-let shooterY = canvas.height - 125;
+let shooterY = canvas.height - 120;
 let bulletX = shooterX;
 let bulletY = shooterY;
 let bulletVX = 0;
@@ -247,9 +246,9 @@ let dragStartX = 0;
 let dragStartY = 0;
 let pullX = 0;
 let pullY = 0;
-const MAX_PULL_DISTANCE = 110;
-const MIN_SPEED = 7;
-const MAX_SPEED = 22;
+const MAX_PULL_DISTANCE = 120;
+const MIN_SPEED = 8;
+const MAX_SPEED = 24;
 let isMoving = false;
 
 let fallingBubbles = [];
@@ -267,14 +266,12 @@ function showScreen(screenId) {
     }
 }
 
-/* 盤面自動生成用：基本の5色のみ */
 function getRandomGridColor() {
     return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
 }
 
-/* 打ち出し玉用：7%の確率で虹色玉 */
 function getRandomShooterColor() {
-    if (Math.random() < 0.07) return SPECIAL_RAINBOW;
+    if (Math.random() < 0.08) return SPECIAL_RAINBOW;
     return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
 }
 
@@ -401,7 +398,6 @@ function resetBulletPos() {
     pullY = 0;
 }
 
-/* クリア条件判定（通常玉が残っていなければクリア。障害物玉は無視） */
 function checkClearCondition() {
     if (fallingBubbles.length > 0 || flashingBubbles.length > 0) return;
 
@@ -456,6 +452,7 @@ function triggerBattleWin(winnerName) {
     gameState = 'battle_result';
 }
 
+/* スマホのタッチ座標を取得 */
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
@@ -465,11 +462,13 @@ function getTouchPos(e) {
     return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
 }
 
-window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
+/* タッチ開始イベント */
 window.addEventListener('touchstart', (e) => {
     if (gameState === 'playing') e.preventDefault();
     handleInputStart(getTouchPos(e));
 }, { passive: false });
+
+window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
 
 function handleInputStart(pos) {
     if (gameState === 'title') return;
@@ -480,13 +479,14 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
-        // 設定ボタン判定 (やや広く設定)
-        if (pos.x >= 310 && pos.x <= 395 && pos.y >= 10 && pos.y <= 65) {
+        // スマホ向けボタン判定（押しやすく広い当たり判定領域）
+        // ⚙️ 設定ボタン（右上面積を広く確保）
+        if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
             openSettings();
             return;
         }
-        // ボムボタン判定 (判定エリアを少し広く拡張)
-        if (pos.x >= 170 && pos.x <= 315 && pos.y >= 10 && pos.y <= 65) {
+        // 💣 ボムボタン（中央上面積を広く確保）
+        if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
             if (bombUsesLeft > 0) {
                 bulletColor = SPECIAL_BOMB;
                 bombUsesLeft--;
@@ -494,6 +494,7 @@ function handleInputStart(pos) {
             return;
         }
 
+        // スマホ用に画面のどこを触って引っ張っても狙える仕様に
         isDragging = true;
         dragStartX = pos.x;
         dragStartY = pos.y;
@@ -502,12 +503,14 @@ function handleInputStart(pos) {
     }
 }
 
-window.addEventListener('mousemove', (e) => { if (isDragging) handleDragMove(getTouchPos(e)); });
+/* タッチ移動イベント */
 window.addEventListener('touchmove', (e) => {
     if (!isDragging) return;
     if (e.cancelable) e.preventDefault();
     handleDragMove(getTouchPos(e));
 }, { passive: false });
+
+window.addEventListener('mousemove', (e) => { if (isDragging) handleDragMove(getTouchPos(e)); });
 
 function handleDragMove(pos) {
     let dx = pos.x - dragStartX;
@@ -522,18 +525,25 @@ function handleDragMove(pos) {
     pullY = dy;
 }
 
+/* タッチ離した（発射）イベント */
+window.addEventListener('touchend', (e) => {
+    if (isDragging) {
+        isDragging = false;
+        releaseBullet();
+    }
+});
 window.addEventListener('mouseup', () => { if (isDragging) { isDragging = false; releaseBullet(); } });
-window.addEventListener('touchend', () => { if (isDragging) { isDragging = false; releaseBullet(); } });
 
 function releaseBullet() {
     let pullDist = Math.hypot(pullX, pullY);
-    if (pullDist < 10) { pullX = 0; pullY = 0; return; }
+    if (pullDist < 12) { pullX = 0; pullY = 0; return; }
 
     let power = Math.min(1.0, pullDist / MAX_PULL_DISTANCE);
     let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
     let launchAngle = Math.atan2(-pullY, -pullX);
     
-    if (launchAngle < -0.1 && launchAngle > -Math.PI + 0.1) {
+    // 上方向へのショットのみ許可
+    if (launchAngle < -0.05 && launchAngle > -Math.PI + 0.05) {
         bulletVX = Math.cos(launchAngle) * speed;
         bulletVY = Math.sin(launchAngle) * speed;
         isMoving = true;
@@ -617,21 +627,6 @@ function removeFloating() {
     }
     if (droppedCount > 0) {
         score += droppedCount * 20;
-        if (gameMode === 'battle' && battleType === 'rally') {
-            addRallyPenaltyLine(droppedCount);
-        }
-    }
-}
-
-function addRallyPenaltyLine(count) {
-    let newRow = [];
-    let cols = COLS - (grid.length % 2 === 0 ? 0 : 1);
-    for(let i=0; i<cols; i++) {
-        newRow.push(getRandomGridColor());
-    }
-    grid.unshift(newRow);
-    if (grid.length > ROWS) {
-        grid.pop();
     }
 }
 
@@ -765,46 +760,49 @@ function snapBullet() {
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (gameState === 'title') {
-        drawTitleBackground();
-        return;
-    }
+    if (gameState === 'title') { drawTitleBackground(); return; }
     if (gameState === 'gameclear') { drawGameClearScreen(); return; }
     if (gameState === 'battle_result') { drawBattleResultScreen(); return; }
 
+    /* スマホ向けヘッダー描画 */
     ctx.fillStyle = "#111";
     ctx.fillRect(0, 0, canvas.width, TOP_MARGIN);
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, TOP_MARGIN); ctx.lineTo(canvas.width, TOP_MARGIN); ctx.stroke();
 
+    // ステージ＆スコア表示
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 12px sans-serif";
-    ctx.fillText(gameMode === 'battle' ? `MODE: ${battleType}` : `ステージ:${currentStage}/10`, 8, 26);
-    ctx.fillText(`スコア:${score}`, 8, 48);
+    ctx.font = "bold 13px sans-serif";
+    ctx.fillText(gameMode === 'battle' ? `対戦: ${battleType}` : `STAGE ${currentStage}/10`, 12, 28);
+    ctx.fillText(`SCORE: ${score}`, 12, 52);
 
+    // NEXT表示
     ctx.fillStyle = "#aaa";
-    ctx.font = "10px sans-serif";
-    ctx.fillText("NEXT", 132, 20);
-    drawBubble(145, 38, nextColor, 14);
+    ctx.font = "bold 10px sans-serif";
+    ctx.fillText("NEXT", 118, 22);
+    drawBubble(130, 48, nextColor, 15);
 
+    // スマホ特化：ボム玉ボタン（大きめ）
     let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
     ctx.fillStyle = btnBg;
-    ctx.beginPath(); ctx.roundRect(175, 20, 135, 38, 8); ctx.fill();
-    ctx.strokeStyle = bombUsesLeft > 0 ? "#fff" : "#555"; ctx.lineWidth = 1.5; ctx.stroke(); ctx.closePath();
+    ctx.beginPath(); ctx.roundRect(165, 14, 125, 52, 10); ctx.fill();
+    ctx.strokeStyle = bombUsesLeft > 0 ? "#fff" : "#555"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
 
     ctx.fillStyle = bombUsesLeft > 0 ? "#fff" : "#777";
-    ctx.font = "bold 11px sans-serif";
-    ctx.fillText(`💣ボム(${bombUsesLeft})`, 190, 43);
+    ctx.font = "bold 14px sans-serif";
+    ctx.fillText(`💣ボム (${bombUsesLeft})`, 180, 45);
 
-    ctx.fillStyle = "#444";
-    ctx.beginPath(); ctx.roundRect(318, 20, 72, 38, 8); ctx.fill();
-    ctx.strokeStyle = "#888"; ctx.lineWidth = 1.5; ctx.stroke(); ctx.closePath();
+    // スマホ特化：設定ボタン（大きめ）
+    ctx.fillStyle = "#333";
+    ctx.beginPath(); ctx.roundRect(305, 14, 85, 52, 10); ctx.fill();
+    ctx.strokeStyle = "#888"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
 
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 11px sans-serif";
-    ctx.fillText("⚙️ 設定", 333, 43);
+    ctx.font = "bold 13px sans-serif";
+    ctx.fillText("⚙️ 設定", 320, 45);
 
+    // 盤面描画
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -828,17 +826,18 @@ function draw() {
 
     for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS);
 
+    // タッチ＆スワイプ（引いて狙う）操作ガイドの描画
     if (isDragging) {
         let pullDist = Math.hypot(pullX, pullY);
-        if (pullDist > 5) {
+        if (pullDist > 8) {
             let launchAngle = Math.atan2(-pullY, -pullX);
-            let guideLength = 160;
+            let guideLength = 220; // 予測線を長く伸ばして見やすく
             ctx.beginPath(); ctx.moveTo(shooterX, shooterY);
             ctx.lineTo(shooterX + Math.cos(launchAngle) * guideLength, shooterY + Math.sin(launchAngle) * guideLength);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'; ctx.lineWidth = 3; ctx.setLineDash([8, 6]); ctx.stroke(); ctx.setLineDash([]); ctx.closePath();
+            ctx.strokeStyle = 'rgba(255, 204, 0, 0.95)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8]); ctx.stroke(); ctx.setLineDash([]); ctx.closePath();
         }
         ctx.beginPath(); ctx.moveTo(shooterX, shooterY); ctx.lineTo(shooterX + pullX, shooterY + pullY);
-        ctx.strokeStyle = '#ffcc00'; ctx.lineWidth = 3; ctx.stroke(); ctx.closePath();
+        ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 4; ctx.stroke(); ctx.closePath();
         drawBubble(shooterX + pullX, shooterY + pullY, bulletColor, RADIUS);
     } else if (isMoving) {
         drawBubble(bulletX, bulletY, bulletColor, RADIUS);
@@ -850,7 +849,7 @@ function draw() {
 function drawTitleBackground() {
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("Ver.1.25", 15, 25);
+    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("スマホ特化 Ver.1.30", 15, 30);
 }
 
 function drawGameClearScreen() {
@@ -865,10 +864,7 @@ function drawGameClearScreen() {
 function drawBattleResultScreen() {
     ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#ffcc00"; ctx.font = "bold 32px sans-serif"; ctx.textAlign = "center";
-    ctx.fillText(`${battleWinner} WIN!`, canvas.width / 2, canvas.height / 2 - 120);
-
-    ctx.fillStyle = "#fff"; ctx.font = "16px sans-serif";
-    ctx.fillText("敗者へメッセージを送ろう：", canvas.width / 2, canvas.height / 2 - 70);
+    ctx.fillText(`${battleWinner} WIN!`, canvas.width / 2, canvas.height / 2 - 80);
     document.getElementById('ticker-container').style.display = 'none';
 }
 
@@ -885,11 +881,11 @@ function drawBubble(x, y, color, r) {
     if (color === SPECIAL_RAINBOW) {
         let colorIndex = Math.floor(Date.now() / 150) % BASE_COLORS.length;
         ctx.fillStyle = BASE_COLORS[colorIndex]; ctx.fill(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.stroke();
-        ctx.fillStyle = "#ffffff"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillStyle = "#ffffff"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText("★", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     } else if (color === SPECIAL_BOMB) {
         ctx.fillStyle = "#333"; ctx.fill(); ctx.strokeStyle = "#ff5722"; ctx.lineWidth = 3; ctx.stroke();
-        ctx.fillStyle = "#ff5722"; ctx.font = "bold 12px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillStyle = "#ff5722"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText("💣", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     } else {
         ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
@@ -911,25 +907,24 @@ function openSettings() {
     listContainer.innerHTML = '';
     [...BASE_COLORS, SPECIAL_BOMB].forEach(col => {
         let rowDiv = document.createElement('div');
-        rowDiv.className = 'color-setting-row';
-        rowDiv.style.cssText = "display:flex; align-items:center; justify-content:space-between; width:90%; background:#222; padding:8px 10px; margin:5px 0; border-radius:6px;";
+        rowDiv.style.cssText = "display:flex; align-items:center; justify-content:space-between; width:92%; background:#222; padding:10px 12px; margin:6px 0; border-radius:8px;";
         
         let nameSpan = document.createElement('span');
-        nameSpan.style.cssText = "font-size:12px; font-weight:bold;";
+        nameSpan.style.cssText = "font-size:13px; font-weight:bold;";
         nameSpan.innerText = COLOR_NAMES[col] || col;
 
         let btnGroup = document.createElement('div');
-        btnGroup.style.cssText = "display:flex; gap:6px;";
+        btnGroup.style.cssText = "display:flex; gap:8px;";
 
         let uploadBtn = document.createElement('button');
         uploadBtn.className = 'menu-btn sub';
-        uploadBtn.style.cssText = "padding:6px 10px; font-size:11px; width:auto; margin:0;";
-        uploadBtn.innerText = '📷 画像変更';
+        uploadBtn.style.cssText = "padding:8px 12px; font-size:12px; width:auto; margin:0;";
+        uploadBtn.innerText = '📷 変更';
 
         let resetBtn = document.createElement('button');
         resetBtn.className = 'menu-btn danger';
-        resetBtn.style.cssText = "padding:6px 8px; font-size:11px; width:auto; margin:0;";
-        resetBtn.innerText = '🔄 リセット';
+        resetBtn.style.cssText = "padding:8px 10px; font-size:12px; width:auto; margin:0;";
+        resetBtn.innerText = '🔄';
         resetBtn.onclick = () => {
             delete customImages[col];
             openSettings();
