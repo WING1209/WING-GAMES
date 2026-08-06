@@ -51,24 +51,26 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-const ROWS = 13;
+const ROWS = 12;
 const COLS = 8;
-const RADIUS = 19; // スマホで見やすく少しコンパクトに調整
+const RADIUS = 19;
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3);
 const COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
-const UNBREAKABLE_COLOR = '#fff'; // 消えないブロック：白塗りつぶし
+const UNBREAKABLE_COLOR = '#fff';
 
 let grid = [];
 let score = 0;
 let currentStage = 1;
 const maxStages = 10;
 
-// ゲームの状態: 'title', 'playing', 'stageclear', 'gameover'
-let gameState = 'title';
+let gameState = 'title'; // 'title', 'playing', 'clear_anim', 'gameclear'
+let clearTimer = 0;
 
+// 発射台の位置（画面の一番下に見やすく配置）
 let shooterX = canvas.width / 2;
-let shooterY = canvas.height - 50;
+let shooterY = canvas.height - 45;
+
 let bulletX = shooterX;
 let bulletY = shooterY;
 let bulletVX = 0;
@@ -81,9 +83,9 @@ let dragStartX = 0;
 let dragStartY = 0;
 let pullX = 0;
 let pullY = 0;
-const MAX_PULL_DISTANCE = 120;
+const MAX_PULL_DISTANCE = 110;
 const MIN_SPEED = 7;
-const MAX_SPEED = 23;
+const MAX_SPEED = 22;
 let isMoving = false;
 
 function getRandomColor() {
@@ -104,7 +106,7 @@ function initGridForStage(stage) {
     let unbreakableCount = Math.min(COLS * 3, 2 * Math.pow(2, stage - 1));
     let placedUnbreakable = 0;
     while (placedUnbreakable < unbreakableCount) {
-        let r = Math.floor(Math.random() * 4);
+        let r = Math.floor(Math.random() * 3);
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         let c = Math.floor(Math.random() * colsInRow);
         if (grid[r][c] === null) {
@@ -113,7 +115,7 @@ function initGridForStage(stage) {
         }
     }
 
-    for (let r = 0; r < Math.min(ROWS, stage + 2); r++) {
+    for (let r = 0; r < Math.min(ROWS, stage + 1); r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
             if (grid[r][c] === null && Math.random() < 0.65) {
@@ -153,21 +155,14 @@ function checkClearCondition() {
 
     if (!hasBreakable) {
         if (currentStage < maxStages) {
-            currentStage++;
-            initGridForStage(currentStage);
-            spawnBullet();
+            gameState = 'clear_anim';
+            clearTimer = 90; // 約1.5秒間クリアメッセージを表示
         } else {
-            alert('全10ステージクリア！おめでとうございます！');
-            currentStage = 1;
-            score = 0;
-            gameState = 'title';
-            initGridForStage(currentStage);
-            spawnBullet();
+            gameState = 'gameclear';
         }
     }
 }
 
-// タッチ・マウス座標をCanvas内の正確な解像度に変換
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -191,7 +186,6 @@ window.addEventListener('touchstart', (e) => {
 
 function handleInputStart(pos) {
     if (gameState === 'title') {
-        // スタートボタン付近（中央下部）のタップ判定
         if (pos.x >= canvas.width / 2 - 90 && pos.x <= canvas.width / 2 + 90 &&
             pos.y >= canvas.height / 2 + 40 && pos.y <= canvas.height / 2 + 110) {
             gameState = 'playing';
@@ -200,6 +194,11 @@ function handleInputStart(pos) {
             initGridForStage(currentStage);
             spawnBullet();
         }
+        return;
+    }
+
+    if (gameState === 'gameclear') {
+        gameState = 'title';
         return;
     }
 
@@ -270,7 +269,7 @@ function releaseBullet() {
 }
 
 function getGridCoords(x, y) {
-    let topMargin = 55; // UI枠の分を下げる
+    let topMargin = 55;
     let r = Math.round((y - topMargin - RADIUS) / ROW_HEIGHT);
     r = Math.max(0, Math.min(ROWS - 1, r));
     let offsetX = (r % 2 === 1) ? RADIUS : 0;
@@ -334,6 +333,17 @@ function markConnected(r, c, color, visited) {
 }
 
 function update() {
+    if (gameState === 'clear_anim') {
+        clearTimer--;
+        if (clearTimer <= 0) {
+            currentStage++;
+            initGridForStage(currentStage);
+            spawnBullet();
+            gameState = 'playing';
+        }
+        return;
+    }
+
     if (gameState === 'playing' && isMoving) {
         bulletX += bulletVX;
         bulletY += bulletVY;
@@ -358,7 +368,7 @@ function update() {
                 if (grid[r][c] !== null) {
                     let pos = getPixelCoords(r, c);
                     let dist = Math.hypot(bulletX - pos.x, bulletY - pos.y);
-                    if (dist < DIAMETER - 4) {
+                    if (dist < DIAMETER - 3) {
                         snapBullet();
                         return;
                     }
@@ -376,6 +386,35 @@ function snapBullet() {
         let colsInRow = (coords.r % 2 === 0) ? COLS : COLS - 1;
         coords.c = Math.max(0, Math.min(colsInRow - 1, coords.c));
         
+        // 既に玉がある場合は、安全に周囲の空きマスに収める
+        if (grid[coords.r][coords.c] !== null) {
+            let found = false;
+            let neighbors = (coords.r % 2 === 0) ? 
+                [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] :
+                [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+            for (let n of neighbors) {
+                let nr = coords.r + n[0];
+                let nc = coords.c + n[1];
+                let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
+                if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] === null) {
+                    coords.r = nr;
+                    coords.c = nc;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // 最上段の空いている場所へ強制スナップ
+                for (let c = 0; c < COLS; c++) {
+                    if (grid[0][c] === null) {
+                        coords.r = 0;
+                        coords.c = c;
+                        break;
+                    }
+                }
+            }
+        }
+
         if (grid[coords.r][coords.c] === null) {
             grid[coords.r][coords.c] = bulletColor;
             
@@ -402,7 +441,12 @@ function draw() {
         return;
     }
 
-    // --- 上部UI枠の描画 ---
+    if (gameState === 'gameclear') {
+        drawGameClearScreen();
+        return;
+    }
+
+    // --- 上部UI枠（ステージ、スコア、NEXT玉） ---
     ctx.fillStyle = "#111";
     ctx.fillRect(0, 0, canvas.width, 50);
     ctx.strokeStyle = "#444";
@@ -413,9 +457,15 @@ function draw() {
     ctx.stroke();
 
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 15px sans-serif";
+    ctx.font = "bold 14px sans-serif";
     ctx.fillText(`ステージ: ${currentStage}/10`, 15, 30);
-    ctx.fillText(`スコア: ${score}`, canvas.width - 120, 30);
+    ctx.fillText(`スコア: ${score}`, 145, 30);
+
+    // ステータス枠内にNEXT玉を表示
+    ctx.fillStyle = "#aaa";
+    ctx.font = "11px sans-serif";
+    ctx.fillText("NEXT", 280, 20);
+    drawBubble(320, 25, nextColor, 15); // 少し小さめのNEXT玉
 
     // --- フィールド内のバブル描画 ---
     for (let r = 0; r < ROWS; r++) {
@@ -424,20 +474,20 @@ function draw() {
             if (grid[r][c] !== null) {
                 let pos = getPixelCoords(r, c);
                 if (grid[r][c] === UNBREAKABLE_COLOR) {
-                    drawUnbreakableBubble(pos.x, pos.y);
+                    drawUnbreakableBubble(pos.x, pos.y, RADIUS);
                 } else {
-                    drawBubble(pos.x, pos.y, grid[r][c]);
+                    drawBubble(pos.x, pos.y, grid[r][c], RADIUS);
                 }
             }
         }
     }
 
-    // --- 操作・発射の描画 ---
+    // --- 発射台の玉と引っ張り・ガイド描画 ---
     if (isDragging) {
         let pullDist = Math.hypot(pullX, pullY);
         if (pullDist > 5) {
             let launchAngle = Math.atan2(-pullY, -pullX);
-            let guideLength = 150;
+            let guideLength = 160;
             let guideEndX = shooterX + Math.cos(launchAngle) * guideLength;
             let guideEndY = shooterY + Math.sin(launchAngle) * guideLength;
 
@@ -460,27 +510,36 @@ function draw() {
         ctx.stroke();
         ctx.closePath();
 
-        drawBubble(shooterX + pullX, shooterY + pullY, bulletColor);
+        drawBubble(shooterX + pullX, shooterY + pullY, bulletColor, RADIUS);
     } else {
-        drawBubble(bulletX, bulletY, bulletColor);
+        // 通常時：発射台にある待機中の玉
+        drawBubble(shooterX, shooterY, bulletColor, RADIUS);
     }
 
-    // NEXT表示
-    drawBubble(35, canvas.height - 35, nextColor);
-    ctx.fillStyle = "#fff";
-    ctx.font = "12px sans-serif";
-    ctx.fillText("NEXT", 18, canvas.height - 65);
+    // --- ステージクリア演出オーバーレイ ---
+    if (gameState === 'clear_anim') {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#ffcc00";
+        ctx.font = "bold 28px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(`ステージ ${currentStage} クリア！`, canvas.width / 2, canvas.height / 2 - 10);
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "16px sans-serif";
+        ctx.fillText("次のステージへ進みます...", canvas.width / 2, canvas.height / 2 + 30);
+        ctx.textAlign = "left";
+    }
 }
 
 function drawTitleScreen() {
-    // 左上のバージョン表示
     ctx.fillStyle = "#aaa";
     ctx.font = "bold 14px sans-serif";
     ctx.fillText("Ver.1.0", 15, 25);
 
-    // タイトルロゴ
     ctx.fillStyle = "#ff4da6";
-    ctx.font = "bold 32px sans-serif";
+    ctx.font = "bold 30px sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("パズルボブル風", canvas.width / 2, canvas.height / 2 - 80);
     
@@ -488,7 +547,6 @@ function drawTitleScreen() {
     ctx.font = "bold 18px sans-serif";
     ctx.fillText("スマホ特化版", canvas.width / 2, canvas.height / 2 - 45);
 
-    // スタートボタン
     ctx.fillStyle = "#ffcc00";
     ctx.beginPath();
     ctx.roundRect(canvas.width / 2 - 90, canvas.height / 2 + 40, 180, 55, 12);
@@ -499,12 +557,32 @@ function drawTitleScreen() {
     ctx.font = "bold 20px sans-serif";
     ctx.fillText("START", canvas.width / 2, canvas.height / 2 + 75);
 
-    ctx.textAlign = "left"; // アライメントを戻す
+    ctx.textAlign = "left";
 }
 
-function drawBubble(x, y, color) {
+function drawGameClearScreen() {
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#ffcc00";
+    ctx.font = "bold 28px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("全ステージクリア！", canvas.width / 2, canvas.height / 2 - 50);
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "18px sans-serif";
+    ctx.fillText(`最終スコア: ${score}`, canvas.width / 2, canvas.height / 2);
+
+    ctx.fillStyle = "#4da6ff";
+    ctx.font = "14px sans-serif";
+    ctx.fillText("画面をタップしてタイトルへ", canvas.width / 2, canvas.height / 2 + 60);
+
+    ctx.textAlign = "left";
+}
+
+function drawBubble(x, y, color, r) {
     ctx.beginPath();
-    ctx.arc(x, y, RADIUS - 1, 0, Math.PI * 2);
+    ctx.arc(x, y, r - 1, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
     ctx.strokeStyle = "#fff";
@@ -513,10 +591,9 @@ function drawBubble(x, y, color) {
     ctx.closePath();
 }
 
-function drawUnbreakableBubble(x, y) {
-    // 白塗りつぶし
+function drawUnbreakableBubble(x, y, r) {
     ctx.beginPath();
-    ctx.arc(x, y, RADIUS - 1, 0, Math.PI * 2);
+    ctx.arc(x, y, r - 1, 0, Math.PI * 2);
     ctx.fillStyle = UNBREAKABLE_COLOR;
     ctx.fill();
     ctx.strokeStyle = "#aaa";
@@ -524,15 +601,14 @@ function drawUnbreakableBubble(x, y) {
     ctx.stroke();
     ctx.closePath();
 
-    // 赤字の「✖」
-    let offset = 7;
+    let offset = 6;
     ctx.beginPath();
     ctx.moveTo(x - offset, y - offset);
     ctx.lineTo(x + offset, y + offset);
     ctx.moveTo(x + offset, y - offset);
     ctx.lineTo(x - offset, y + offset);
     ctx.strokeStyle = "#ff3333";
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2.5;
     ctx.stroke();
     ctx.closePath();
 }
