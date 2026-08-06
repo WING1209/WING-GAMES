@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>パズルボブル風 Ver1.05</title>
+    <title>パズルボブル風 スマホ特化版</title>
     <style>
         body {
             margin: 0;
@@ -67,7 +67,6 @@ const maxStages = 10;
 let gameState = 'title'; // 'title', 'playing', 'clear_anim', 'gameclear'
 let clearTimer = 0;
 
-// 発射台の位置
 let shooterX = canvas.width / 2;
 let shooterY = canvas.height - 125;
 
@@ -78,7 +77,6 @@ let bulletVY = 0;
 let bulletColor = getRandomColor();
 let nextColor = getRandomColor();
 
-// レインボー玉の回数制限（ゲーム中計2回）
 let rainbowUsesLeft = 2;
 
 let isDragging = false;
@@ -92,7 +90,6 @@ const MAX_SPEED = 22;
 let isMoving = false;
 
 const SPECIAL_COLOR = 'SPECIAL_RAINBOW';
-
 let fallingBubbles = [];
 
 function getRandomColor() {
@@ -214,8 +211,7 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
-        // 上部右側の「レインボーボタン」のタップ判定
-        if (pos.x >= 285 && pos.x <= 385 && pos.y >= 32 && pos.y <= 60) {
+        if (pos.x >= 220 && pos.x <= 388 && pos.y >= 20 && pos.y <= 58) {
             if (rainbowUsesLeft > 0) {
                 bulletColor = SPECIAL_COLOR;
                 rainbowUsesLeft--;
@@ -289,17 +285,37 @@ function releaseBullet() {
 }
 
 function getPixelCoords(r, c) {
-    let topMargin = 70; // 上部UI拡張分に合わせる
+    let topMargin = 70;
     let offsetX = (r % 2 === 1) ? RADIUS : 0;
     let x = c * DIAMETER + RADIUS + offsetX;
     let y = r * ROW_HEIGHT + RADIUS + topMargin;
     return { x, y };
 }
 
+// 座標から一番近い空きグリッドセルを割り出す（最上部到達時はそのままそのセルを優先）
 function findNearestAvailableCell(x, y) {
     let topMargin = 70;
     let bestR = 0, bestC = 0;
     let minDist = Infinity;
+
+    // もし最上部付近（1行目付近）に到達した場合、ダイレクトに最上部の該当セルを割り当てる
+    if (y - topMargin <= ROW_HEIGHT + RADIUS) {
+        let r = 0;
+        let colsInRow = COLS;
+        let bestCol = 0;
+        let minXDist = Infinity;
+        for (let c = 0; c < colsInRow; c++) {
+            let pos = getPixelCoords(r, c);
+            let xDist = Math.abs(x - pos.x);
+            if (xDist < minXDist) {
+                minXDist = xDist;
+                bestCol = c;
+            }
+        }
+        if (grid[r][bestCol] === null) {
+            return { r: r, c: bestCol };
+        }
+    }
 
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
@@ -335,16 +351,22 @@ function findConnected(r, c, color, visited = new Set()) {
     return matches;
 }
 
+// 浮き玉の正しい判定ロジック（天井からしっかり繋がっている玉以外をすべて落下させる）
 function removeFloating() {
     let visited = new Set();
-    for (let c = 0; c < grid[0].length; c++) {
-        if (grid[0][c] !== null) markConnected(0, c, grid[0][c], visited);
+    
+    // 1行目のすべてのセルから繋がっているものだけをマーク
+    for (let c = 0; c < COLS; c++) {
+        if (grid[0][c] !== null) {
+            markConnectedFromCeiling(0, c, visited);
+        }
     }
 
     let droppedCount = 0;
     for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < grid[r].length; c++) {
-            if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR && !visited.has(`${r},${c}`)) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] !== null && !visited.has(`${r},${c}`)) {
                 let color = grid[r][c];
                 let pos = getPixelCoords(r, c);
                 fallingBubbles.push({
@@ -361,15 +383,20 @@ function removeFloating() {
     if (droppedCount > 0) score += droppedCount * 20;
 }
 
-function markConnected(r, c, color, visited) {
+function markConnectedFromCeiling(r, c, visited) {
     let key = `${r},${c}`;
-    if (visited.has(key) || r < 0 || r >= ROWS || c < 0) return;
-    if (grid[r][c] === null || grid[r][c] !== color) return;
+    let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+    if (visited.has(key) || r < 0 || r >= ROWS || c < 0 || c >= colsInRow) return;
+    if (grid[r][c] === null) return;
+
     visited.add(key);
     let neighbors = (r % 2 === 0) ? 
         [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] :
         [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
-    for (let n of neighbors) markConnected(r + n[0], c + n[1], color, visited);
+
+    for (let n of neighbors) {
+        markConnectedFromCeiling(r + n[0], c + n[1], visited);
+    }
 }
 
 function update() {
@@ -457,7 +484,8 @@ function snapBullet() {
                 if (targetColor !== null) {
                     let clearedCount = 0;
                     for (let r = 0; r < ROWS; r++) {
-                        for (let c = 0; c < grid[r].length; c++) {
+                        let rCols = (r % 2 === 0) ? COLS : COLS - 1;
+                        for (let c = 0; c < rCols; c++) {
                             if (grid[r][c] === targetColor) {
                                 let pos = getPixelCoords(r, c);
                                 fallingBubbles.push({
@@ -512,7 +540,6 @@ function draw() {
         return;
     }
 
-    // --- 上部UI枠（ステージ、スコア、NEXT玉、レインボーボタン） ---
     ctx.fillStyle = "#111";
     ctx.fillRect(0, 0, canvas.width, 65);
     ctx.strokeStyle = "#444";
@@ -527,13 +554,11 @@ function draw() {
     ctx.fillText(`ステージ: ${currentStage}/10`, 10, 27);
     ctx.fillText(`スコア: ${score}`, 10, 48);
 
-    // NEXT表示
     ctx.fillStyle = "#aaa";
     ctx.font = "10px sans-serif";
     ctx.fillText("NEXT", 155, 20);
     drawBubble(170, 38, nextColor, 14);
 
-    // レインボー玉使用ボタン（上部右側へ統合）
     let btnBg = rainbowUsesLeft > 0 ? "#8a2be2" : "#333";
     ctx.fillStyle = btnBg;
     ctx.beginPath();
@@ -548,7 +573,6 @@ function draw() {
     ctx.font = "bold 12px sans-serif";
     ctx.fillText(`★レインボー(${rainbowUsesLeft})`, 233, 43);
 
-    // --- フィールド内のバブル描画 ---
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -563,12 +587,10 @@ function draw() {
         }
     }
 
-    // --- 落下中のバブル描画 ---
     for (let fb of fallingBubbles) {
         drawBubble(fb.x, fb.y, fb.color, RADIUS);
     }
 
-    // --- 発射台の玉と引っ張り・ガイド・飛行中描画 ---
     if (isDragging) {
         let pullDist = Math.hypot(pullX, pullY);
         if (pullDist > 5) {
@@ -603,7 +625,6 @@ function draw() {
         drawBubble(shooterX, shooterY, bulletColor, RADIUS);
     }
 
-    // --- ステージクリア演出オーバーレイ ---
     if (gameState === 'clear_anim') {
         ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -623,7 +644,7 @@ function draw() {
 function drawTitleScreen() {
     ctx.fillStyle = "#aaa";
     ctx.font = "bold 14px sans-serif";
-    ctx.fillText("Ver.1.04", 15, 25);
+    ctx.fillText("Ver.1.08", 15, 25);
 
     ctx.fillStyle = "#ff4da6";
     ctx.font = "bold 30px sans-serif";
