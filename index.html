@@ -1,230 +1,192 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>パズルボブル風 オンライン対戦＆ランキング版</title>
-    <!-- PeerJS (通信用ライブラリ) -->
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-    <style>
-        * {
-            box-sizing: border-box;
-            -webkit-touch-callout: none;
-            -webkit-user-select: none;
-            user-select: none;
-        }
-        body {
-            margin: 0;
-            padding: 0;
-            background: #111;
-            color: #fff;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            height: 100dvh;
-            overflow: hidden;
-            touch-action: none;
-        }
-        #game-container {
-            position: relative;
-            width: 100vw;
-            height: 100dvh;
-            max-width: 480px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-        canvas {
-            background: #1a1a1a;
-            box-shadow: 0 0 15px rgba(0,0,0,0.8);
-            display: block;
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            z-index: 1;
-            touch-action: none;
-        }
-        .overlay-screen {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(17, 17, 17, 0.94);
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
-            z-index: 100;
-            text-align: center;
-        }
-        .overlay-screen h2 {
-            color: #ffcc00;
-            font-size: 26px;
-            margin-bottom: 20px;
-        }
-        .menu-btn {
-            background: #ffcc00;
-            color: #111;
-            border: none;
-            padding: 16px 20px;
-            border-radius: 12px;
-            font-weight: bold;
-            font-size: 18px;
-            margin: 10px 0;
-            width: 85%;
-            max-width: 280px;
-            cursor: pointer;
-        }
-        .menu-btn:active {
-            transform: scale(0.96);
-            opacity: 0.9;
-        }
-        .menu-btn.sub { background: #4da6ff; color: #fff; }
-        .menu-btn.gray { background: #555; color: #fff; }
-        .menu-btn.danger { background: #ff4d4d; color: #fff; }
-        
-        input.text-input {
-            background: #222;
-            border: 2px solid #ffcc00;
-            color: #fff;
-            font-size: 24px;
-            text-align: center;
-            padding: 10px;
-            border-radius: 10px;
-            width: 220px;
-            margin: 15px 0;
-        }
-        #status-message {
-            color: #ff4d4d;
-            font-size: 14px;
-            margin-top: 10px;
-            height: 20px;
-        }
-        .ranking-table {
-            width: 90%;
-            border-collapse: collapse;
-            margin: 15px 0;
-            font-size: 15px;
-        }
-        .ranking-table th, .ranking-table td {
-            border-bottom: 1px solid #444;
-            padding: 8px;
-            text-align: center;
-        }
-        .ranking-table th { color: #ffcc00; }
-    </style>
+  <meta charset="UTF-8">
+  <title>オンライン対戦パズルゲーム</title>
+  <style>
+    body { text-align: center; background: #222; color: #fff; font-family: sans-serif; }
+    canvas { background: #000; border: 2px solid #fff; margin-top: 10px; }
+    #ui { margin: 15px; }
+    button { padding: 8px 16px; font-size: 16px; cursor: pointer; }
+  </style>
 </head>
 <body>
 
-    <div id="game-container">
-        <canvas id="gameCanvas" width="400" height="750"></canvas>
+  <h1>対戦パズルゲーム</h1>
+  
+  <!-- 接続設定用UI -->
+  <div id="ui">
+    <button id="btn-host" onclick="createRoom()">ホストとして部屋を作成</button>
+    <button id="btn-join" onclick="joinRoom()">フレンドの部屋に参加</button>
+    <p id="status-text">「部屋を作成」または「参加」を押してください</p>
+  </div>
 
-        <!-- ① モード選択画面 (タイトル) -->
-        <div id="screen-mode" class="overlay-screen">
-            <h2>パズルボブル風</h2>
-            <button class="menu-btn" onclick="startSinglePlay()">ひとりで遊ぶ</button>
-            <button class="menu-btn sub" onclick="showScreen('screen-battle-select')">フレンド対戦</button>
-            <button class="menu-btn gray" onclick="showRankingBoard()">🏆 ランキングを見る</button>
-            <button class="menu-btn gray" onclick="openSettings()">⚙️ 玉画像設定</button>
-        </div>
+  <!-- ゲーム画面 -->
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
 
-        <!-- ② フレンド対戦 モード選択画面 -->
-        <div id="screen-battle-select" class="overlay-screen">
-            <h2>対戦モード選択</h2>
-            <button class="menu-btn" onclick="selectBattleType('タイムアタック')">⏱️ タイムアタック</button>
-            <button class="menu-btn sub" onclick="selectBattleType('ラリー対戦')">⚔️ ラリー対戦</button>
-            <button class="menu-btn gray" onclick="showScreen('screen-mode')">もどる</button>
-        </div>
+<script>
+// ==========================================
+// 1. オーディオ（SE / BGM）のプリロード設定
+// ==========================================
+const audioPath = 'audio/';
 
-        <!-- ③ 勝利ルール選択画面（新設） -->
-        <div id="screen-win-rule" class="overlay-screen">
-            <h2>勝利ルール設定</h2>
-            <p style="font-size: 14px; color: #ccc;">どちらが先に目標勝利数に達するか</p>
-            <button class="menu-btn" onclick="selectWinRule(1)">🥇 先に 1勝</button>
-            <button class="menu-btn sub" onclick="selectWinRule(2)">🥇🥇 先に 2勝</button>
-            <button class="menu-btn gray" onclick="showScreen('screen-battle-select')">もどる</button>
-        </div>
+// SE（効果音）の初期化
+const se = {
+  ballShoot:    new Audio(`${audioPath}se/se_ball_shoot.wav`),
+  ballLand:     new Audio(`${audioPath}se/se_ball_land.wav`),
+  bombExplode:  new Audio(`${audioPath}se/se_bomb_explode.wav`),
+  rainbowLand:  new Audio(`${audioPath}se/se_rainbow_land.wav`),
+  rainbowSet:   new Audio(`${audioPath}se/se_rainbow_set.wav`),
+  blockFall:    new Audio(`${audioPath}se/se_block_fall.wav`),
+  gameOver:     new Audio(`${audioPath}se/se_game_over.wav`),
+  stageClear:   new Audio(`${audioPath}se/se_stage_clear.wav`)
+};
 
-        <!-- ④ ホスト / ゲスト 役割選択画面 -->
-        <div id="screen-role-select" class="overlay-screen">
-            <h2 id="role-select-title">対戦設定</h2>
-            <button class="menu-btn" onclick="setupRole('host')">👑 ホスト（部屋を作る）</button>
-            <button class="menu-btn sub" onclick="setupRole('guest')">🎮 ゲスト（部屋に入る）</button>
-            <button class="menu-btn gray" onclick="showScreen('screen-win-rule')">もどる</button>
-        </div>
+// SEを遅延なく再生する補助関数（連打対応）
+function playSE(sound) {
+  if (sound) {
+    sound.currentTime = 0; // 再生位置を先頭に戻す
+    sound.play().catch(e => console.log("Audio play blocked:", e));
+  }
+}
 
-        <!-- ⑤ ゲスト用 合言葉入力画面 -->
-        <div id="screen-guest-join" class="overlay-screen">
-            <h2>合言葉を入力</h2>
-            <p style="font-size: 14px; color: #ccc;">ホストから教わった4桁の数字を入力</p>
-            <input type="number" id="input-room-code" class="text-input" style="width:160px; letter-spacing:6px;" maxlength="4" placeholder="0000">
-            <br>
-            <button class="menu-btn" onclick="joinRoom()">接続して対戦開始！</button>
-            <button class="menu-btn gray" onclick="cancelNetwork('screen-role-select')">もどる</button>
-            <div id="status-message"></div>
-        </div>
+// BGMのランダム再生設定
+const bgmList = [
+  `${audioPath}bgm/bgm_play_01.wav`,
+  `${audioPath}bgm/bgm_play_02.wav`,
+  `${audioPath}bgm/bgm_play_03.wav`,
+  `${audioPath}bgm/bgm_play_04.wav`
+];
+let currentBGM = null;
 
-        <!-- ⑥ ホスト用 待機・合言葉表示画面 -->
-        <div id="screen-host-wait" class="overlay-screen">
-            <h2>対戦相手の接続待ち</h2>
-            <p style="font-size: 14px; color: #ccc;">以下の4桁を相手に伝えてください</p>
-            <div id="display-room-code" style="font-size: 52px; color: #ffcc00; letter-spacing: 10px; margin: 20px 0; font-weight: bold;">----</div>
-            <p style="font-size: 13px; color: #888;">通信準備中...</p>
-            <button class="menu-btn gray" onclick="cancelNetwork('screen-role-select')">キャンセル</button>
-        </div>
+function playRandomBGM() {
+  const randomIndex = Math.floor(Math.random() * bgmList.length);
+  if (currentBGM) currentBGM.pause();
+  
+  currentBGM = new Audio(bgmList[randomIndex]);
+  currentBGM.loop = true; // ループ再生
+  currentBGM.play().catch(e => console.log("BGM play blocked:", e));
+}
 
-        <!-- ⑦ ステージクリア画面（ソロ用途中経過） -->
-        <div id="screen-stage-clear" class="overlay-screen">
-            <h2>STAGE CLEAR!</h2>
-            <p id="clear-score-text" style="font-size: 18px; margin-bottom: 20px; color: #fff;"></p>
-            <button class="menu-btn sub" onclick="nextStageAction()">次のステージへ ➔</button>
-            <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ戻る</button>
-        </div>
 
-        <!-- ⑧ 名前入力画面（10面クリアでランクイン時） -->
-        <div id="screen-name-input" class="overlay-screen">
-            <h2 style="color:#4dff4d;">RANK IN!</h2>
-            <p id="rankin-desc-text" style="font-size: 15px; color: #fff;"></p>
-            <input type="text" id="player-name-input" class="text-input" maxlength="8" placeholder="プレイヤー名">
-            <br>
-            <button class="menu-btn" onclick="submitScoreAndShowRanking()">登録してランキングを見る</button>
-        </div>
+// ==========================================
+// 2. ゲーム状態管理とホスト待機処理
+// ==========================================
+const GameState = {
+  IDLE: 'IDLE',            // 初期状態
+  WAITING: 'WAITING',      // 相手の参加待ち（★重要：ここでゲーム進行を止める）
+  PLAYING: 'PLAYING',      // 対戦中
+  GAMEOVER: 'GAMEOVER'     // 終了
+};
 
-        <!-- ⑨ ランキング表示画面 -->
-        <div id="screen-ranking" class="overlay-screen">
-            <h2>🏆 殿堂入りランキング</h2>
-            <table class="ranking-table">
-                <thead>
-                    <tr><th>順位</th><th>名前</th><th>タイム</th><th>スコア</th></tr>
-                </thead>
-                <tbody id="ranking-list-body"></tbody>
-            </table>
-            <button class="menu-btn sub" onclick="returnToTitle()">タイトルへ戻る</button>
-        </div>
+let currentState = GameState.IDLE;
+let isHost = false;
+let connection = null; // 通信オブジェクト
 
-        <!-- ⑩ ゲームオーバー画面 -->
-        <div id="screen-game-over" class="overlay-screen">
-            <h2 style="color: #ff4d4d;">GAME OVER</h2>
-            <p id="gameover-score-text" style="font-size: 18px; margin-bottom: 20px; color: #fff;"></p>
-            <button class="menu-btn danger" onclick="retryStage()">もう一度挑戦 🔄</button>
-            <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ戻る</button>
-        </div>
+const statusText = document.getElementById('status-text');
 
-        <!-- 設定画面モーダル -->
-        <div id="settings-overlay" class="overlay-screen" style="justify-content: flex-start; padding-top: 40px;">
-            <h2>玉の画像カスタム</h2>
-            <div id="settings-list" style="width: 100%; display: flex; flex-direction: column; align-items: center; max-height: 480px; overflow-y: auto;"></div>
-            <button class="menu-btn sub" style="margin-top: 20px;" onclick="closeSettings()">保存して戻る</button>
-        </div>
-    </div>
+// ① ホストが部屋を作る処理
+function createRoom() {
+  isHost = true;
+  currentState = GameState.WAITING; // ★即座に開始せず「待機中」にする！
+  
+  statusText.innerText = "プレイヤー2の参加を待っています...";
+  document.getElementById('btn-host').disabled = true;
+  document.getElementById('btn-join').disabled = true;
 
-    <!-- JavaScriptファイルの読み込み -->
-    <script src="script.js"></script>
+  // 擬似的なネットワーク接続処理（実際はPeerJSやWebSocketを使用）
+  mockServerHostListen();
+}
+
+// ② フレンド（ゲスト）が部屋に入る処理
+function joinRoom() {
+  isHost = false;
+  statusText.innerText = "ホストに接続中...";
+  
+  // 擬似的な接続処理
+  mockServerConnectHost();
+}
+
+// ③ 相手が参加・接続完了した時に呼ばれる関数（対戦開始）
+function onOpponentConnected() {
+  currentState = GameState.PLAYING;
+  statusText.innerText = "対戦開始！";
+  
+  // BGMをランダムで再生開始
+  playRandomBGM();
+  
+  // 対戦初期化処理へ
+  initGame();
+}
+
+
+// ==========================================
+// 3. 通信の受信・対戦ループ処理
+// ==========================================
+function initGame() {
+  console.log("ゲームが正常に開始されました");
+}
+
+function update() {
+  // ★待機状態（WAITING）の時はゲームの計算を行わない
+  if (currentState !== GameState.PLAYING) {
+    return;
+  }
+
+  // --- ここに対戦中の位置計算や判定を書く ---
+}
+
+function draw() {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 画面描画
+  if (currentState === GameState.WAITING) {
+    ctx.fillStyle = "#fff";
+    ctx.font = "24px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("フレンドの参加を待っています...", canvas.width / 2, canvas.height / 2);
+  } else if (currentState === GameState.PLAYING) {
+    ctx.fillStyle = "#0f0";
+    ctx.font = "20px sans-serif";
+    ctx.fillText("対戦中！", 50, 30);
+  }
+}
+
+// メインゲームループ
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+// ループ起動
+gameLoop();
+
+
+// ==========================================
+// 4. ネットワーク接続のテスト用ダミー処理
+// (※実際の通信用APIに合わせて差し替えてください)
+// ==========================================
+function mockServerHostListen() {
+  // テスト用：3秒後に相手が接続してきたと仮定
+  /* 
+     本番環境（PeerJS等）ではここを:
+     peer.on('connection', (conn) => {
+         connection = conn;
+         onOpponentConnected(); // 接続されたら開始！
+     });
+  */
+}
+
+function mockServerConnectHost() {
+  // テスト用：参加ボタンを押したらホスト側へ通知
+  setTimeout(() => {
+    onOpponentConnected();
+  }, 1000);
+}
+</script>
+
 </body>
 </html>
