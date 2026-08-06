@@ -401,6 +401,7 @@ function resetBulletPos() {
     pullY = 0;
 }
 
+/* クリア条件判定（通常玉が残っていなければクリア。障害物玉は無視） */
 function checkClearCondition() {
     if (fallingBubbles.length > 0 || flashingBubbles.length > 0) return;
 
@@ -479,11 +480,13 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
-        if (pos.x >= 325 && pos.x <= 390 && pos.y >= 20 && pos.y <= 58) {
+        // 設定ボタン判定 (やや広く設定)
+        if (pos.x >= 310 && pos.x <= 395 && pos.y >= 10 && pos.y <= 65) {
             openSettings();
             return;
         }
-        if (pos.x >= 180 && pos.x <= 315 && pos.y >= 20 && pos.y <= 58) {
+        // ボムボタン判定 (判定エリアを少し広く拡張)
+        if (pos.x >= 170 && pos.x <= 315 && pos.y >= 10 && pos.y <= 65) {
             if (bombUsesLeft > 0) {
                 bulletColor = SPECIAL_BOMB;
                 bombUsesLeft--;
@@ -847,7 +850,7 @@ function draw() {
 function drawTitleBackground() {
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("Ver.1.23", 15, 25);
+    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("Ver.1.25", 15, 25);
 }
 
 function drawGameClearScreen() {
