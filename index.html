@@ -67,7 +67,7 @@ const RADIUS = 22;
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3);
 const COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
-const UNBREAKABLE_COLOR = '#555';
+const UNBREAKABLE_COLOR = '#444';
 
 let grid = [];
 let score = 0;
@@ -233,8 +233,8 @@ window.addEventListener('touchmove', (e) => {
 function handleDragMove(x, y) {
     let dx = x - dragStartX;
     let dy = y - dragStartY;
-    if (dy < 0) dy = 0;
-
+    
+    // 引っ張った方向をそのまま蓄積
     let dist = Math.hypot(dx, dy);
     if (dist > MAX_PULL_DISTANCE) {
         let angle = Math.atan2(dy, dx);
@@ -267,11 +267,14 @@ function releaseBullet() {
 
     let power = Math.min(1.0, pullDist / MAX_PULL_DISTANCE);
     let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
-    let angle = Math.atan2(pullY, pullX);
     
-    if (angle > -Math.PI && angle < 0) {
-        bulletVX = Math.cos(angle) * speed;
-        bulletVY = Math.sin(angle) * speed;
+    // 引っ張った方向（pullX, pullY）の「逆方向」に発射する角度を計算
+    let launchAngle = Math.atan2(-pullY, -pullX);
+    
+    // 上方向（画面の奥側）に飛ぶように制限（真横や下への発射を防ぐ）
+    if (launchAngle < -0.1 && launchAngle > -Math.PI + 0.1) {
+        bulletVX = Math.cos(launchAngle) * speed;
+        bulletVY = Math.sin(launchAngle) * speed;
         isMoving = true;
     }
     pullX = 0;
@@ -410,7 +413,7 @@ function draw() {
             if (grid[r][c] !== null) {
                 let pos = getPixelCoords(r, c);
                 if (grid[r][c] === UNBREAKABLE_COLOR) {
-                    drawSquareBlock(pos.x, pos.y);
+                    drawUnbreakableBubble(pos.x, pos.y);
                 } else {
                     drawBubble(pos.x, pos.y, grid[r][c]);
                 }
@@ -419,13 +422,14 @@ function draw() {
     }
 
     if (isDragging) {
-        let pullAngle = Math.atan2(pullY, pullX);
-        
-        if (pullAngle > -Math.PI && pullAngle < 0) {
+        let pullDist = Math.hypot(pullX, pullY);
+        if (pullDist > 5) {
+            let launchAngle = Math.atan2(-pullY, -pullX);
             let guideLength = 150;
-            let guideEndX = shooterX + Math.cos(pullAngle) * guideLength;
-            let guideEndY = shooterY + Math.sin(pullAngle) * guideLength;
+            let guideEndX = shooterX + Math.cos(launchAngle) * guideLength;
+            let guideEndY = shooterY + Math.sin(launchAngle) * guideLength;
 
+            // 前方への点線ガイド
             ctx.beginPath();
             ctx.moveTo(shooterX, shooterY);
             ctx.lineTo(guideEndX, guideEndY);
@@ -437,15 +441,16 @@ function draw() {
             ctx.closePath();
         }
 
+        // 引っ張りゴム（反対方向へ引っ張る線）
         ctx.beginPath();
         ctx.moveTo(shooterX, shooterY);
-        ctx.lineTo(shooterX - pullX, shooterY - pullY);
+        ctx.lineTo(shooterX + pullX, shooterY + pullY);
         ctx.strokeStyle = '#ffcc00';
         ctx.lineWidth = 3;
         ctx.stroke();
         ctx.closePath();
 
-        drawBubble(shooterX - pullX, shooterY - pullY, bulletColor);
+        drawBubble(shooterX + pullX, shooterY + pullY, bulletColor);
     } else {
         drawBubble(bulletX, bulletY, bulletColor);
     }
@@ -467,15 +472,26 @@ function drawBubble(x, y, color) {
     ctx.closePath();
 }
 
-function drawSquareBlock(x, y) {
-    let size = DIAMETER - 4;
-    let half = size / 2;
+function drawUnbreakableBubble(x, y) {
+    // 丸のまま、消せないことを示すための「バツ印」と重厚な外枠を描画
     ctx.beginPath();
-    ctx.rect(x - half, y - half, size, size);
+    ctx.arc(x, y, RADIUS - 1, 0, Math.PI * 2);
     ctx.fillStyle = UNBREAKABLE_COLOR;
     ctx.fill();
     ctx.strokeStyle = "#888";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.closePath();
+
+    // 中央のバツ印マーク
+    let offset = 8;
+    ctx.beginPath();
+    ctx.moveTo(x - offset, y - offset);
+    ctx.lineTo(x + offset, y + offset);
+    ctx.moveTo(x + offset, y - offset);
+    ctx.lineTo(x - offset, y + offset);
+    ctx.strokeStyle = "#aaa";
+    ctx.lineWidth = 3;
     ctx.stroke();
     ctx.closePath();
 }
