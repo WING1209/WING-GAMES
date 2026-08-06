@@ -312,7 +312,7 @@ function startSinglePlay() {
     gameState = 'playing';
     score = 0;
     currentStage = 1;
-    bombUsesLeft = 2;
+    bombUsesLeft = 2; // ボム回数リセット
     initGridForStage(currentStage);
     spawnBullet();
     showScreen('');
@@ -350,7 +350,7 @@ function startBattleGame() {
     gameState = 'playing';
     score = 0;
     currentStage = 1;
-    bombUsesLeft = 2;
+    bombUsesLeft = 2; // ボム回数リセット
     initGridForStage(currentStage);
     spawnBullet();
     showScreen('');
@@ -359,6 +359,7 @@ function startBattleGame() {
 function nextStageAction() {
     if (currentStage < maxStages) {
         currentStage++;
+        bombUsesLeft = 2; // 次のステージ進出時にボム回数を2にリセット！
         initGridForStage(currentStage);
         spawnBullet();
         gameState = 'playing';
@@ -370,6 +371,7 @@ function nextStageAction() {
 }
 
 function retryStage() {
+    bombUsesLeft = 2; // リトライ時にボム回数を2にリセット！
     initGridForStage(currentStage);
     spawnBullet();
     gameState = 'playing';
@@ -397,7 +399,6 @@ function resetBulletPos() {
     pullY = 0;
 }
 
-/* クリア条件の判定：消せるブロック（壊せないブロック以外）が無くなったかを判定 */
 function checkClearCondition() {
     if (fallingBubbles.length > 0 || flashingBubbles.length > 0) return;
 
@@ -405,7 +406,6 @@ function checkClearCondition() {
     for (let r = 0; r < grid.length; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
-            // UNBREAKABLE_COLOR(壊せないブロック) 以外の通常玉が存在するかをチェック
             if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR) {
                 hasBreakable = true;
                 break;
@@ -414,7 +414,6 @@ function checkClearCondition() {
         if (hasBreakable) break;
     }
 
-    // 消せるブロックがすべて消えている場合、壊せないブロックが残っていてもクリア
     if (!hasBreakable) {
         if (gameMode === 'battle') {
             triggerBattleWin('Player 1 (あなた)');
@@ -839,7 +838,7 @@ function draw() {
 function drawTitleBackground() {
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("スマホ特化 Ver.1.31", 15, 30);
+    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("スマホ特化 Ver.1.32", 15, 30);
 }
 
 function drawGameClearScreen() {
