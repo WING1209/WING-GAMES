@@ -38,6 +38,7 @@
             width: 100%;
             height: 100%;
             object-fit: contain;
+            z-index: 1; /* キャンバスの階層を最下層に固定 */
         }
         /* オーバーレイ共通 */
         .overlay-screen {
@@ -46,14 +47,14 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(17, 17, 17, 0.95);
+            background: rgba(17, 17, 17, 0.92);
             display: none;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             padding: 20px;
             box-sizing: border-box;
-            z-index: 10;
+            z-index: 100; /* キャンバスより前面に表示できるように変更 */
             text-align: center;
         }
         .overlay-screen h2 {
@@ -73,6 +74,7 @@
             width: 80%;
             max-width: 260px;
             cursor: pointer;
+            pointer-events: auto; /* スマホタップの確実化 */
         }
         .menu-btn.sub {
             background: #4da6ff;
@@ -109,7 +111,7 @@
             overflow: hidden;
             white-space: nowrap;
             display: none;
-            z-index: 20;
+            z-index: 200;
             font-weight: bold;
             font-size: 16px;
             box-shadow: 0 -2px 10px rgba(0,0,0,0.5);
@@ -131,7 +133,7 @@
         <canvas id="gameCanvas" width="400" height="750"></canvas>
 
         <!-- ① モード選択画面 -->
-        <div id="screen-mode" class="overlay-screen" style="display: flex;">
+        <div id="screen-mode" class="overlay-screen">
             <h2>パズルボブル風</h2>
             <button class="menu-btn" onclick="startSinglePlay()">ひとりで遊ぶ</button>
             <button class="menu-btn sub" onclick="showScreen('screen-battle-menu')">フレンドバトル</button>
@@ -224,7 +226,7 @@ let gameMode = 'single';
 let battleType = null;
 let battleRole = null;
 let roomCode = '';
-let gameState = 'title'; // 'title', 'playing', 'clear_anim', 'gameclear', 'gameover', 'settings', 'host_wait', 'guest_join', 'battle_result'
+let gameState = 'title';
 
 let shooterX = canvas.width / 2;
 let shooterY = canvas.height - 125;
@@ -257,7 +259,11 @@ function showScreen(screenId) {
     document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
     if (screenId === '') return;
     let target = document.getElementById(screenId);
-    if (target) target.style.display = 'flex';
+    if (target) {
+        target.style.display = 'flex';
+        // モード選択メニューを開いた時は状態を更新
+        if (screenId === 'screen-mode') gameState = 'title';
+    }
 }
 
 function getRandomColor() {
@@ -315,11 +321,13 @@ function setupBattle(type, role) {
     if (role === 'host') {
         roomCode = Math.floor(1000 + Math.random() * 9000).toString();
         document.getElementById('display-room-code').innerText = roomCode;
+        gameState = 'host_wait';
         showScreen('screen-host-wait');
         setTimeout(() => {
             if (gameState === 'host_wait') startBattleGame();
         }, 3000);
     } else {
+        gameState = 'guest_join';
         showScreen('screen-guest-join');
     }
 }
@@ -441,8 +449,8 @@ function triggerBattleWin(winnerName) {
 
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
-    let clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    let clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
+    let clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
     let scaleX = canvas.width / rect.width;
     let scaleY = canvas.height / rect.height;
     return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
@@ -450,7 +458,7 @@ function getTouchPos(e) {
 
 window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
 window.addEventListener('touchstart', (e) => {
-    e.preventDefault();
+    if (gameState === 'playing') e.preventDefault();
     handleInputStart(getTouchPos(e));
 }, { passive: false });
 
@@ -486,7 +494,7 @@ function handleInputStart(pos) {
 window.addEventListener('mousemove', (e) => { if (isDragging) handleDragMove(getTouchPos(e)); });
 window.addEventListener('touchmove', (e) => {
     if (!isDragging) return;
-    e.preventDefault();
+    if (e.cancelable) e.preventDefault();
     handleDragMove(getTouchPos(e));
 }, { passive: false });
 
@@ -747,7 +755,7 @@ function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (gameState === 'title') {
-        drawTitleScreen();
+        drawTitleBackground();
         return;
     }
     if (gameState === 'gameclear') { drawGameClearScreen(); return; }
@@ -828,11 +836,10 @@ function draw() {
     }
 }
 
-function drawTitleScreen() {
+function drawTitleBackground() {
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("Ver.1.21", 15, 25);
-    ctx.fillStyle = "#ff4da6"; ctx.font = "bold 28px sans-serif"; ctx.textAlign = "center";
-    ctx.fillText("パズルボブル風", canvas.width / 2, canvas.height / 2 - 80);
-    ctx.textAlign = "left";
 }
 
 function drawGameClearScreen() {
@@ -937,6 +944,7 @@ function loop() {
     requestAnimationFrame(loop);
 }
 
+// 起動時にモード選択画面を表示
 showScreen('screen-mode');
 loop();
 </script>
