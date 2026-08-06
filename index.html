@@ -54,7 +54,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(17, 17, 17, 0.94);
+            background: rgba(17, 17, 17, 0.95);
             display: none;
             flex-direction: column;
             align-items: center;
@@ -125,58 +125,65 @@
     <div id="game-container">
         <canvas id="gameCanvas" width="400" height="750"></canvas>
 
-        <!-- ① タイトル画面（4種ボタン） -->
+        <!-- ① タイトル画面 -->
         <div id="screen-mode" class="overlay-screen">
             <h2>パズルボブル風</h2>
             <button class="menu-btn" onclick="startSinglePlay()">🎮 ひとりで遊ぶ</button>
-            <button class="menu-btn sub" onclick="showScreen('screen-battle-select')">⚔️ フレンド対戦</button>
+            <button class="menu-btn sub" onclick="showScreen('screen-role-select')">⚔️ フレンド対戦</button>
             <button class="menu-btn gray" onclick="showRankingBoard()">🏆 ランキング</button>
             <button class="menu-btn gray" onclick="openSettings()">⚙️ 玉画像設定</button>
         </div>
 
-        <!-- ② フレンド対戦 モード選択画面 -->
-        <div id="screen-battle-select" class="overlay-screen">
-            <h2>対戦モード選択</h2>
-            <button class="menu-btn" onclick="selectBattleType('タイムアタック')">⏱️ タイムアタック</button>
-            <button class="menu-btn sub" onclick="selectBattleType('ラリー対戦')">⚔️ ラリー対戦</button>
+        <!-- ② ホスト / ゲスト 役割選択画面 -->
+        <div id="screen-role-select" class="overlay-screen">
+            <h2>対戦設定</h2>
+            <button class="menu-btn" onclick="setupRole('host')">👑 ホスト（部屋を作る）</button>
+            <button class="menu-btn sub" onclick="setupRole('guest')">🎮 ゲスト（部屋に入る）</button>
             <button class="menu-btn gray" onclick="showScreen('screen-mode')">もどる</button>
         </div>
 
-        <!-- ③ 勝利ルール選択画面 -->
-        <div id="screen-win-rule" class="overlay-screen">
-            <h2>勝利ルール設定</h2>
-            <p style="font-size: 14px; color: #ccc;">どちらが先に目標勝利数に達するか</p>
-            <button class="menu-btn" onclick="selectWinRule(1)">🥇 先に 1勝</button>
-            <button class="menu-btn sub" onclick="selectWinRule(2)">🥇🥇 先に 2勝</button>
-            <button class="menu-btn gray" onclick="showScreen('screen-battle-select')">もどる</button>
-        </div>
-
-        <!-- ④ ホスト / ゲスト 役割選択画面 -->
-        <div id="screen-role-select" class="overlay-screen">
-            <h2 id="role-select-title">対戦設定</h2>
-            <button class="menu-btn" onclick="setupRole('host')">👑 ホスト（部屋を作る）</button>
-            <button class="menu-btn sub" onclick="setupRole('guest')">🎮 ゲスト（部屋に入る）</button>
-            <button class="menu-btn gray" onclick="showScreen('screen-win-rule')">もどる</button>
-        </div>
-
-        <!-- ⑤ ゲスト用 合言葉入力画面 -->
+        <!-- ③ ゲスト用 合言葉入力画面 -->
         <div id="screen-guest-join" class="overlay-screen">
             <h2>合言葉を入力</h2>
             <p style="font-size: 14px; color: #ccc;">ホストから教わった4桁の数字を入力</p>
             <input type="number" id="input-room-code" class="text-input" style="width:160px; letter-spacing:6px;" maxlength="4" placeholder="0000">
             <br>
-            <button class="menu-btn" onclick="joinRoom()">接続して対戦開始！</button>
+            <button class="menu-btn" onclick="joinRoom()">接続して待機</button>
             <button class="menu-btn gray" onclick="cancelNetwork('screen-role-select')">もどる</button>
             <div id="status-message"></div>
         </div>
 
-        <!-- ⑥ ホスト用 待機画面（相手接続までゲーム開始されません） -->
+        <!-- ④ ホスト用 待機画面 -->
         <div id="screen-host-wait" class="overlay-screen">
             <h2>対戦相手の接続待ち</h2>
             <p style="font-size: 14px; color: #ccc;">以下の4桁を相手に伝えてください</p>
             <div id="display-room-code" style="font-size: 52px; color: #ffcc00; letter-spacing: 10px; margin: 20px 0; font-weight: bold;">----</div>
             <p style="font-size: 13px; color: #888;">相手が接続するまで自動で待機します...</p>
             <button class="menu-btn gray" onclick="cancelNetwork('screen-role-select')">キャンセル</button>
+        </div>
+
+        <!-- ⑤ ゲスト用 ホストのルール決定待ち画面 -->
+        <div id="screen-guest-wait-rule" class="overlay-screen">
+            <h2>接続完了！</h2>
+            <p style="font-size: 16px; color: #ffcc00; margin-top: 20px;">ホストが対戦ルールを設定中...</p>
+            <p style="font-size: 13px; color: #888;">しばらくお待ちください</p>
+        </div>
+
+        <!-- ⑥ ホスト専用：マッチング後の対戦設定画面 -->
+        <div id="screen-host-rule-setup" class="overlay-screen">
+            <h2 style="color:#4dff4d;">マッチング成功！</h2>
+            <p style="font-size: 14px; color: #ccc;">対戦ルールを選択してください</p>
+            <div style="width:100%; margin: 10px 0;">
+                <p style="margin:5px 0; font-size:14px;">■ モード</p>
+                <button class="menu-btn sub" id="btn-mode-ta" onclick="setHostBattleType('タイムアタック')" style="padding:10px; font-size:15px; margin:4px;">⏱️ タイムアタック</button>
+                <button class="menu-btn gray" id="btn-mode-rally" onclick="setHostBattleType('ラリー対戦')" style="padding:10px; font-size:15px; margin:4px;">⚔️ ラリー対戦</button>
+            </div>
+            <div style="width:100%; margin: 10px 0;">
+                <p style="margin:5px 0; font-size:14px;">■ 勝利数</p>
+                <button class="menu-btn" id="btn-win-1" onclick="setHostTargetWins(1)" style="padding:10px; font-size:15px; margin:4px;">🥇 1勝先取</button>
+                <button class="menu-btn gray" id="btn-win-2" onclick="setHostTargetWins(2)" style="padding:10px; font-size:15px; margin:4px;">🥇🥇 2勝先取</button>
+            </div>
+            <button class="menu-btn" style="background:#ffcc00; margin-top:15px;" onclick="confirmHostBattleStart()">対戦スタート！ 🔥</button>
         </div>
 
         <!-- ⑦ ステージクリア画面（ソロ途中経過） -->
@@ -187,7 +194,7 @@
             <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ戻る</button>
         </div>
 
-        <!-- ⑧ 名前入力画面（10面クリアでランクイン時） -->
+        <!-- ⑧ 名前入力画面（10面クリア時） -->
         <div id="screen-name-input" class="overlay-screen">
             <h2 style="color:#4dff4d;">🏆 RANK IN!</h2>
             <p id="rankin-desc-text" style="font-size: 15px; color: #fff;"></p>
