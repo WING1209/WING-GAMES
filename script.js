@@ -1,0 +1,865 @@
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const ROWS = 12;
+const COLS = 8;
+const RADIUS = 19;
+const DIAMETER = RADIUS * 2;
+const ROW_HEIGHT = RADIUS * Math.sqrt(3);
+
+const BASE_COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
+const COLOR_NAMES = {
+    '#ff4d4d': '赤の玉', '#4da6ff': '青の玉', '#4dff4d': '緑の玉',
+    '#ffff4d': '黄色の玉', '#ff4dda': 'ピンクの玉', 'SPECIAL_BOMB': 'ボム玉(💣)'
+};
+let customImages = {};
+const UNBREAKABLE_COLOR = '#fff';
+const TOP_MARGIN = 80;
+
+let grid = [];
+let score = 0;
+let currentStage = 1;
+const maxStages = 10;
+
+let gameMode = 'single';
+let battleType = ''; // 'タイムアタック' または 'ラリー対戦'
+let battleRole = ''; // 'host' または 'guest'
+let roomCode = '';
+let gameState = 'title';
+
+let shooterX = canvas.width / 2;
+let shooterY = canvas.height - 120;
+let bulletX = shooterX;
+let bulletY = shooterY;
+let bulletVX = 0;
+let bulletVY = 0;
+
+const SPECIAL_RAINBOW = 'SPECIAL_RAINBOW';
+const SPECIAL_BOMB = 'SPECIAL_BOMB';
+
+let bulletColor = getRandomShooterColor();
+let nextColor = getRandomShooterColor();
+let bombUsesLeft = 2;
+
+let isDragging = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let pullX = 0;
+let pullY = 0;
+const MAX_PULL_DISTANCE = 120;
+const MIN_SPEED = 8;
+const MAX_SPEED = 24;
+let isMoving = false;
+
+let fallingBubbles = [];
+let flashingBubbles = [];
+let battleWinner = '';
+
+// --- 🌐 リアルタイム通信 (PeerJS) 用の変数 ---
+let peer = null;
+let conn = null;
+const PEER_PREFIX = 'pb-game-room-2026-'; // 部屋ID重複防止の接頭辞
+
+function showScreen(screenId) {
+    document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
+    if (screenId === '') return;
+    let target = document.getElementById(screenId);
+    if (target) {
+        target.style.display = 'flex';
+        if (screenId === 'screen-mode') gameState = 'title';
+    }
+}
+
+function getRandomGridColor() {
+    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
+}
+
+function getRandomShooterColor() {
+    if (Math.random() < 0.08) return SPECIAL_RAINBOW;
+    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
+}
+
+function initGridForStage(stage) {
+    grid = [];
+    fallingBubbles = [];
+    flashingBubbles = [];
+    for (let r = 0; r < ROWS; r++) {
+        let row = [];
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) row.push(null);
+        grid.push(row);
+    }
+
+    let unbreakableCount = Math.min(COLS * 3, 2 * Math.pow(2, stage - 1));
+    let placedUnbreakable = 0;
+    while (placedUnbreakable < unbreakableCount) {
+        let r = Math.floor(Math.random() * 3);
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        let c = Math.floor(Math.random() * colsInRow);
+        if (grid[r][c] === null) {
+            grid[r][c] = UNBREAKABLE_COLOR;
+            placedUnbreakable++;
+        }
+    }
+
+    for (let r = 0; r < Math.min(ROWS - 4, stage + 1); r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] === null && Math.random() < 0.65) {
+                grid[r][c] = getRandomGridColor();
+            }
+        }
+    }
+}
+
+function startSinglePlay() {
+    closeNetwork();
+    gameMode = 'single';
+    gameState = 'playing';
+    score = 0;
+    currentStage = 1;
+    bombUsesLeft = 2;
+    initGridForStage(currentStage);
+    spawnBullet();
+    showScreen('');
+}
+
+function selectBattleType(type) {
+    battleType = type;
+    document.getElementById('role-select-title').innerText = `${battleType} 設定`;
+    showScreen('screen-role-select');
+}
+
+// --- 🌐 通信処理 (ホスト & ゲスト) ---
+function setupRole(role) {
+    battleRole = role;
+    closeNetwork();
+
+    if (role === 'host') {
+        roomCode = Math.floor(1000 + Math.random() * 9000).toString();
+        document.getElementById('display-room-code').innerText = roomCode;
+        showScreen('screen-host-wait');
+
+        // ホストとしてPeerを作成
+        peer = new Peer(PEER_PREFIX + roomCode);
+
+        peer.on('open', () => {
+            console.log('ホスト部屋作成完了: ' + roomCode);
+        });
+
+        peer.on('connection', (c) => {
+            conn = c;
+            setupConnectionListeners();
+            startBattleGame();
+        });
+
+        peer.on('error', (err) => {
+            alert('通信エラーが発生しました。もう一度試してください。');
+            showScreen('screen-role-select');
+        });
+
+    } else {
+        showScreen('screen-guest-join');
+        document.getElementById('status-message').innerText = '';
+    }
+}
+
+function joinRoom() {
+    let code = document.getElementById('input-room-code').value;
+    if (code.length !== 4) {
+        document.getElementById('status-message').innerText = '4桁の数字を入力してください';
+        return;
+    }
+
+    roomCode = code;
+    document.getElementById('status-message').innerText = '接続中...';
+
+    closeNetwork();
+    peer = new Peer();
+
+    peer.on('open', () => {
+        conn = peer.connect(PEER_PREFIX + roomCode);
+        setupConnectionListeners();
+    });
+
+    peer.on('error', (err) => {
+        document.getElementById('status-message').innerText = '部屋が見つからないか接続失敗しました';
+    });
+}
+
+function setupConnectionListeners() {
+    conn.on('open', () => {
+        if (battleRole === 'guest') {
+            startBattleGame();
+        }
+    });
+
+    // 相手からのデータ受信処理
+    conn.on('data', (data) => {
+        if (data.type === 'attack' && battleType === 'ラリー対戦') {
+            // ラリー対戦でお邪魔玉を受信
+            addOjamaBubbles(data.amount);
+        } else if (data.type === 'gameover') {
+            // 相手がゲームオーバーになったら自分の勝利
+            triggerBattleWin('YOU (相手が失敗)');
+        }
+    });
+
+    conn.on('close', () => {
+        if (gameState === 'playing') {
+            alert('相手との通信が切断されました');
+            returnToTitle();
+        }
+    });
+}
+
+function closeNetwork() {
+    if (conn) conn.close();
+    if (peer) peer.destroy();
+    conn = null;
+    peer = null;
+}
+
+function cancelNetwork(nextScreen) {
+    closeNetwork();
+    showScreen(nextScreen);
+}
+
+function startBattleGame() {
+    gameMode = 'battle';
+    gameState = 'playing';
+    score = 0;
+    currentStage = 1;
+    bombUsesLeft = 2;
+    initGridForStage(currentStage);
+    spawnBullet();
+    showScreen('');
+}
+
+// ⚔️ ラリー対戦用：お邪魔玉を相手に送る / 受け取る処理
+function sendAttackToOpponent(amount) {
+    if (conn && conn.open && battleType === 'ラリー対戦') {
+        conn.send({ type: 'attack', amount: amount });
+    }
+}
+
+function addOjamaBubbles(amount) {
+    // 画面の一番上にランダムなお邪魔玉を追加
+    for (let r = 0; r < Math.min(amount, 2); r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] === null) {
+                grid[r][c] = getRandomGridColor();
+            }
+        }
+    }
+}
+
+function nextStageAction() {
+    if (currentStage < maxStages) {
+        currentStage++;
+        bombUsesLeft = 2;
+        initGridForStage(currentStage);
+        spawnBullet();
+        gameState = 'playing';
+        showScreen('');
+    } else {
+        gameState = 'gameclear';
+        showScreen('');
+    }
+}
+
+function retryStage() {
+    bombUsesLeft = 2;
+    initGridForStage(currentStage);
+    spawnBullet();
+    gameState = 'playing';
+    showScreen('');
+}
+
+function returnToTitle() {
+    closeNetwork();
+    gameState = 'title';
+    showScreen('screen-mode');
+}
+
+function spawnBullet() {
+    bulletColor = nextColor;
+    nextColor = getRandomShooterColor();
+    resetBulletPos();
+    isMoving = false;
+}
+
+function resetBulletPos() {
+    bulletX = shooterX;
+    bulletY = shooterY;
+    bulletVX = 0;
+    bulletVY = 0;
+    pullX = 0;
+    pullY = 0;
+}
+
+function checkClearCondition() {
+    if (fallingBubbles.length > 0 || flashingBubbles.length > 0) return;
+
+    let hasBreakable = false;
+    for (let r = 0; r < grid.length; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR) {
+                hasBreakable = true;
+                break;
+            }
+        }
+        if (hasBreakable) break;
+    }
+
+    if (!hasBreakable) {
+        if (gameMode === 'battle') {
+            triggerBattleWin('YOU');
+        } else {
+            if (currentStage < maxStages) {
+                gameState = 'stage_clear_menu';
+                document.getElementById('clear-score-text').innerText = `ステージ ${currentStage} 成功！ スコア: ${score}`;
+                showScreen('screen-stage-clear');
+            } else {
+                gameState = 'gameclear';
+            }
+        }
+    }
+}
+
+function checkGameOverCondition() {
+    let deadLineRow = ROWS - 2;
+    for (let r = deadLineRow; r < ROWS; r++) {
+        let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let cc = 0; cc < rowCols; cc++) {
+            if (grid[r][cc] !== null) {
+                if (gameMode === 'battle') {
+                    if (conn && conn.open) conn.send({ type: 'gameover' });
+                    triggerBattleWin('OPPONENT (敗北)');
+                } else {
+                    gameState = 'gameover_menu';
+                    document.getElementById('gameover-score-text').innerText = `ステージ ${currentStage} で力尽きた... スコア: ${score}`;
+                    showScreen('screen-game-over');
+                }
+                return;
+            }
+        }
+    }
+}
+
+function triggerBattleWin(winnerName) {
+    battleWinner = winnerName;
+    gameState = 'battle_result';
+}
+
+function getTouchPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
+    let clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
+    let scaleX = canvas.width / rect.width;
+    let scaleY = canvas.height / rect.height;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+}
+
+window.addEventListener('touchstart', (e) => {
+    if (gameState === 'playing') e.preventDefault();
+    handleInputStart(getTouchPos(e));
+}, { passive: false });
+
+window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
+
+function handleInputStart(pos) {
+    if (gameState === 'title') return;
+
+    if (gameState === 'gameclear' || gameState === 'battle_result') {
+        returnToTitle();
+        return;
+    }
+
+    if (gameState === 'playing' && !isMoving) {
+        if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
+            openSettings();
+            return;
+        }
+        if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
+            if (bombUsesLeft > 0) {
+                bulletColor = SPECIAL_BOMB;
+                bombUsesLeft--;
+            }
+            return;
+        }
+
+        isDragging = true;
+        dragStartX = pos.x;
+        dragStartY = pos.y;
+        pullX = 0;
+        pullY = 0;
+    }
+}
+
+window.addEventListener('touchmove', (e) => {
+    if (!isDragging) return;
+    if (e.cancelable) e.preventDefault();
+    handleDragMove(getTouchPos(e));
+}, { passive: false });
+
+window.addEventListener('mousemove', (e) => { if (isDragging) handleDragMove(getTouchPos(e)); });
+
+function handleDragMove(pos) {
+    let dx = pos.x - dragStartX;
+    let dy = pos.y - dragStartY;
+    let dist = Math.hypot(dx, dy);
+    if (dist > MAX_PULL_DISTANCE) {
+        let angle = Math.atan2(dy, dx);
+        dx = Math.cos(angle) * MAX_PULL_DISTANCE;
+        dy = Math.sin(angle) * MAX_PULL_DISTANCE;
+    }
+    pullX = dx;
+    pullY = dy;
+}
+
+window.addEventListener('touchend', () => {
+    if (isDragging) {
+        isDragging = false;
+        releaseBullet();
+    }
+});
+window.addEventListener('mouseup', () => { if (isDragging) { isDragging = false; releaseBullet(); } });
+
+function releaseBullet() {
+    let pullDist = Math.hypot(pullX, pullY);
+    if (pullDist < 12) { pullX = 0; pullY = 0; return; }
+
+    let power = Math.min(1.0, pullDist / MAX_PULL_DISTANCE);
+    let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
+    let launchAngle = Math.atan2(-pullY, -pullX);
+    
+    if (launchAngle < -0.05 && launchAngle > -Math.PI + 0.05) {
+        bulletVX = Math.cos(launchAngle) * speed;
+        bulletVY = Math.sin(launchAngle) * speed;
+        isMoving = true;
+    }
+    pullX = 0; pullY = 0;
+}
+
+function getPixelCoords(r, c) {
+    let offsetX = (r % 2 === 1) ? RADIUS : 0;
+    let x = c * DIAMETER + RADIUS + offsetX;
+    let y = r * ROW_HEIGHT + RADIUS + TOP_MARGIN;
+    return { x, y };
+}
+
+function findCellForPosition(x, y) {
+    let bestR = 0, bestC = 0;
+    let minDist = Infinity;
+    for (let r = 0; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            let pos = getPixelCoords(r, c);
+            let dist = Math.hypot(x - pos.x, y - pos.y);
+            if (dist < minDist) { minDist = dist; bestR = r; bestC = c; }
+        }
+    }
+    if (grid[bestR][bestC] !== null) {
+        let altMinDist = Infinity, altR = bestR, altC = bestC;
+        for (let r = 0; r < ROWS; r++) {
+            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+            for (let c = 0; c < colsInRow; c++) {
+                if (grid[r][c] === null) {
+                    let pos = getPixelCoords(r, c);
+                    let dist = Math.hypot(x - pos.x, y - pos.y);
+                    if (dist < altMinDist) { altMinDist = dist; altR = r; altC = c; }
+                }
+            }
+        }
+        return { r: altR, c: altC };
+    }
+    return { r: bestR, c: bestC };
+}
+
+function findConnected(r, c, color, visited = new Set()) {
+    let key = `${r},${c}`;
+    if (visited.has(key) || r < 0 || r >= ROWS || c < 0) return [];
+    if (grid[r][c] !== color || grid[r][c] === UNBREAKABLE_COLOR) return [];
+
+    visited.add(key);
+    let matches = [{ r, c }];
+    let neighbors = (r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+    for (let n of neighbors) {
+        matches = matches.concat(findConnected(r + n[0], c + n[1], color, visited));
+    }
+    return matches;
+}
+
+function triggerFlashEffect(cellsToFlash, extraScore = 0) {
+    if (cellsToFlash.length === 0) return;
+    flashingBubbles.push({ cells: cellsToFlash, timer: 30 });
+    score += extraScore;
+}
+
+function removeFloating() {
+    let visited = new Set();
+    for (let c = 0; c < COLS; c++) {
+        if (grid[0][c] !== null) markConnectedFromCeiling(0, c, visited);
+    }
+
+    let droppedCount = 0;
+    for (let r = 0; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] !== null && !visited.has(`${r},${c}`)) {
+                let color = grid[r][c];
+                let pos = getPixelCoords(r, c);
+                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: color });
+                grid[r][c] = null;
+                droppedCount++;
+            }
+        }
+    }
+    if (droppedCount > 0) {
+        score += droppedCount * 20;
+    }
+}
+
+function markConnectedFromCeiling(r, c, visited) {
+    let key = `${r},${c}`;
+    let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+    if (visited.has(key) || r < 0 || r >= ROWS || c < 0 || c >= colsInRow) return;
+    if (grid[r][c] === null) return;
+    visited.add(key);
+    let neighbors = (r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+    for (let n of neighbors) markConnectedFromCeiling(r + n[0], c + n[1], visited);
+}
+
+function update() {
+    for (let i = fallingBubbles.length - 1; i >= 0; i--) {
+        let fb = fallingBubbles[i];
+        fb.y += fb.vy;
+        fb.vy += 0.6;
+        if (fb.y > canvas.height + 50) fallingBubbles.splice(i, 1);
+    }
+
+    for (let i = flashingBubbles.length - 1; i >= 0; i--) {
+        flashingBubbles[i].timer--;
+        if (flashingBubbles[i].timer <= 0) {
+            flashingBubbles.splice(i, 1);
+            removeFloating();
+            checkClearCondition();
+        }
+    }
+
+    if (fallingBubbles.length === 0 && flashingBubbles.length === 0 && gameState === 'playing') {
+        checkClearCondition();
+    }
+
+    if (gameState === 'playing' && isMoving) {
+        bulletX += bulletVX;
+        bulletY += bulletVY;
+
+        if (bulletX - RADIUS < 0) { bulletX = RADIUS; bulletVX *= -1; }
+        else if (bulletX + RADIUS > canvas.width) { bulletX = canvas.width - RADIUS; bulletVX *= -1; }
+
+        if (bulletY - RADIUS <= TOP_MARGIN) {
+            bulletY = TOP_MARGIN + RADIUS;
+            snapBullet();
+            return;
+        }
+
+        for (let r = 0; r < ROWS; r++) {
+            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+            for (let c = 0; c < colsInRow; c++) {
+                if (grid[r][c] !== null) {
+                    let pos = getPixelCoords(r, c);
+                    if (Math.hypot(bulletX - pos.x, bulletY - pos.y) < DIAMETER - 3) {
+                        snapBullet();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+function snapBullet() {
+    isMoving = false;
+    let cell = findCellForPosition(bulletX, bulletY);
+    
+    if (cell.r >= 0 && cell.r < ROWS) {
+        let colsInRow = (cell.r % 2 === 0) ? COLS : COLS - 1;
+        cell.c = Math.max(0, Math.min(colsInRow - 1, cell.c));
+
+        if (grid[cell.r][cell.c] === null) {
+            if (bulletColor === SPECIAL_BOMB) {
+                let affectedCells = [{ r: cell.r, c: cell.c }];
+                let neighbors = (cell.r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+                for (let n of neighbors) {
+                    let nr = cell.r + n[0], nc = cell.c + n[1];
+                    let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
+                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc] !== UNBREAKABLE_COLOR) {
+                        affectedCells.push({ r: nr, c: nc });
+                    }
+                }
+                let flashList = [];
+                for (let ac of affectedCells) {
+                    if (grid[ac.r][ac.c] !== null && grid[ac.r][ac.c] !== UNBREAKABLE_COLOR) {
+                        flashList.push({ r: ac.r, c: ac.c });
+                        grid[ac.r][ac.c] = null;
+                    }
+                }
+                triggerFlashEffect(flashList, flashList.length * 40);
+                if (flashList.length >= 4) sendAttackToOpponent(2);
+            } else if (bulletColor === SPECIAL_RAINBOW) {
+                let targetColor = null;
+                let neighbors = (cell.r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+                for (let n of neighbors) {
+                    let nr = cell.r + n[0], nc = cell.c + n[1];
+                    let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
+                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc] !== UNBREAKABLE_COLOR) {
+                        targetColor = grid[nr][nc]; break;
+                    }
+                }
+                if (targetColor !== null) {
+                    let clearedCount = 0;
+                    for (let r = 0; r < ROWS; r++) {
+                        let rCols = (r % 2 === 0) ? COLS : COLS - 1;
+                        for (let c = 0; c < rCols; c++) {
+                            if (grid[r][c] === targetColor) {
+                                let pos = getPixelCoords(r, c);
+                                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: targetColor });
+                                grid[r][c] = null; clearedCount++;
+                            }
+                        }
+                    }
+                    score += clearedCount * 30;
+                    if (clearedCount >= 4) sendAttackToOpponent(2);
+                    removeFloating();
+                }
+            } else {
+                grid[cell.r][cell.c] = bulletColor;
+                let matches = findConnected(cell.r, cell.c, bulletColor);
+                if (matches.length >= 3) {
+                    for (let m of matches) {
+                        let pos = getPixelCoords(m.r, m.c);
+                        fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: bulletColor });
+                        grid[m.r][m.c] = null; score += 10;
+                    }
+                    if (matches.length >= 4) sendAttackToOpponent(1);
+                    removeFloating();
+                }
+            }
+        }
+    }
+    
+    spawnBullet();
+    checkClearCondition();
+    checkGameOverCondition();
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (gameState === 'title') { drawTitleBackground(); return; }
+    if (gameState === 'gameclear') { drawGameClearScreen(); return; }
+    if (gameState === 'battle_result') { drawBattleResultScreen(); return; }
+
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, canvas.width, TOP_MARGIN);
+    ctx.strokeStyle = "#444";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, TOP_MARGIN); ctx.lineTo(canvas.width, TOP_MARGIN); ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 13px sans-serif";
+    ctx.fillText(gameMode === 'battle' ? `対戦: ${battleType}` : `STAGE ${currentStage}/10`, 12, 28);
+    ctx.fillText(`SCORE: ${score}`, 12, 52);
+
+    ctx.fillStyle = "#aaa";
+    ctx.font = "bold 10px sans-serif";
+    ctx.fillText("NEXT", 118, 22);
+    drawBubble(130, 48, nextColor, 15);
+
+    let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
+    ctx.fillStyle = btnBg;
+    ctx.beginPath(); ctx.roundRect(165, 14, 125, 52, 10); ctx.fill();
+    ctx.strokeStyle = bombUsesLeft > 0 ? "#fff" : "#555"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
+
+    ctx.fillStyle = bombUsesLeft > 0 ? "#fff" : "#777";
+    ctx.font = "bold 14px sans-serif";
+    ctx.fillText(`💣ボム (${bombUsesLeft})`, 180, 45);
+
+    ctx.fillStyle = "#333";
+    ctx.beginPath(); ctx.roundRect(305, 14, 85, 52, 10); ctx.fill();
+    ctx.strokeStyle = "#888"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 13px sans-serif";
+    ctx.fillText("⚙️ 設定", 320, 45);
+
+    for (let r = 0; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] !== null) {
+                let pos = getPixelCoords(r, c);
+                if (grid[r][c] === UNBREAKABLE_COLOR) drawUnbreakableBubble(pos.x, pos.y, RADIUS);
+                else drawBubble(pos.x, pos.y, grid[r][c], RADIUS);
+            }
+        }
+    }
+
+    for (let fb of flashingBubbles) {
+        let phase = Math.floor(fb.timer / 10);
+        let flashColor = (phase === 1) ? "#ff0000" : "#ffffff";
+        for (let ac of fb.cells) {
+            let pos = getPixelCoords(ac.r, ac.c);
+            ctx.beginPath(); ctx.arc(pos.x, pos.y, RADIUS - 1, 0, Math.PI * 2);
+            ctx.fillStyle = flashColor; ctx.fill(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.stroke(); ctx.closePath();
+        }
+    }
+
+    for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS);
+
+    if (isDragging) {
+        let pullDist = Math.hypot(pullX, pullY);
+        if (pullDist > 8) {
+            let launchAngle = Math.atan2(-pullY, -pullX);
+            let guideLength = 220;
+            ctx.beginPath(); ctx.moveTo(shooterX, shooterY);
+            ctx.lineTo(shooterX + Math.cos(launchAngle) * guideLength, shooterY + Math.sin(launchAngle) * guideLength);
+            ctx.strokeStyle = 'rgba(255, 204, 0, 0.95)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8]); ctx.stroke(); ctx.setLineDash([]); ctx.closePath();
+        }
+        ctx.beginPath(); ctx.moveTo(shooterX, shooterY); ctx.lineTo(shooterX + pullX, shooterY + pullY);
+        ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 4; ctx.stroke(); ctx.closePath();
+        drawBubble(shooterX + pullX, shooterY + pullY, bulletColor, RADIUS);
+    } else if (isMoving) {
+        drawBubble(bulletX, bulletY, bulletColor, RADIUS);
+    } else {
+        drawBubble(shooterX, shooterY, bulletColor, RADIUS);
+    }
+}
+
+function drawTitleBackground() {
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("オンライン対戦 Ver.2.0", 15, 30);
+}
+
+function drawGameClearScreen() {
+    ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#ffcc00"; ctx.font = "bold 28px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("全ステージクリア！", canvas.width / 2, canvas.height / 2 - 40);
+    ctx.fillStyle = "#fff"; ctx.font = "18px sans-serif"; ctx.fillText(`最終スコア: ${score}`, canvas.width / 2, canvas.height / 2 + 10);
+    ctx.fillStyle = "#4da6ff"; ctx.font = "14px sans-serif"; ctx.fillText("画面をタップしてタイトルへ", canvas.width / 2, canvas.height / 2 + 60);
+    ctx.textAlign = "left";
+}
+
+function drawBattleResultScreen() {
+    ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#ffcc00"; ctx.font = "bold 32px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(`${battleWinner} WIN!`, canvas.width / 2, canvas.height / 2 - 40);
+    ctx.fillStyle = "#4da6ff"; ctx.font = "14px sans-serif"; ctx.fillText("画面をタップしてタイトルへ", canvas.width / 2, canvas.height / 2 + 20);
+    ctx.textAlign = "left";
+}
+
+function drawBubble(x, y, color, r) {
+    if (customImages[color]) {
+        ctx.save();
+        ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.clip();
+        ctx.drawImage(customImages[color], x - r, y - r, r * 2, r * 2);
+        ctx.restore();
+        ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
+        return;
+    }
+    ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2);
+    if (color === SPECIAL_RAINBOW) {
+        let colorIndex = Math.floor(Date.now() / 150) % BASE_COLORS.length;
+        ctx.fillStyle = BASE_COLORS[colorIndex]; ctx.fill(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.stroke();
+        ctx.fillStyle = "#ffffff"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("★", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    } else if (color === SPECIAL_BOMB) {
+        ctx.fillStyle = "#333"; ctx.fill(); ctx.strokeStyle = "#ff5722"; ctx.lineWidth = 3; ctx.stroke();
+        ctx.fillStyle = "#ff5722"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("💣", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    } else {
+        ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+    }
+    ctx.closePath();
+}
+
+function drawUnbreakableBubble(x, y, r) {
+    ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.fillStyle = UNBREAKABLE_COLOR; ctx.fill();
+    ctx.strokeStyle = "#aaa"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
+    let offset = 6;
+    ctx.beginPath(); ctx.moveTo(x - offset, y - offset); ctx.lineTo(x + offset, y + offset);
+    ctx.moveTo(x + offset, y - offset); ctx.lineTo(x - offset, y + offset);
+    ctx.strokeStyle = "#ff3333"; ctx.lineWidth = 2.5; ctx.stroke(); ctx.closePath();
+}
+
+function openSettings() {
+    let listContainer = document.getElementById('settings-list');
+    listContainer.innerHTML = '';
+    [...BASE_COLORS, SPECIAL_BOMB].forEach(col => {
+        let rowDiv = document.createElement('div');
+        rowDiv.style.cssText = "display:flex; align-items:center; justify-content:space-between; width:92%; background:#222; padding:10px 12px; margin:6px 0; border-radius:8px;";
+        
+        let nameSpan = document.createElement('span');
+        nameSpan.style.cssText = "font-size:13px; font-weight:bold;";
+        nameSpan.innerText = COLOR_NAMES[col] || col;
+
+        let btnGroup = document.createElement('div');
+        btnGroup.style.cssText = "display:flex; gap:8px;";
+
+        let uploadBtn = document.createElement('button');
+        uploadBtn.className = 'menu-btn sub';
+        uploadBtn.style.cssText = "padding:8px 12px; font-size:12px; width:auto; margin:0;";
+        uploadBtn.innerText = '📷 変更';
+
+        let resetBtn = document.createElement('button');
+        resetBtn.className = 'menu-btn danger';
+        resetBtn.style.cssText = "padding:8px 10px; font-size:12px; width:auto; margin:0;";
+        resetBtn.innerText = '🔄';
+        resetBtn.onclick = () => {
+            delete customImages[col];
+            openSettings();
+        };
+        
+        let fileInput = document.createElement('input');
+        fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.display = 'none';
+        fileInput.onchange = (e) => {
+            let file = e.target.files[0];
+            if (file) {
+                let reader = new FileReader();
+                reader.onload = (event) => {
+                    let img = new Image();
+                    img.onload = () => { customImages[col] = img; openSettings(); };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+        uploadBtn.onclick = () => fileInput.click();
+
+        btnGroup.appendChild(uploadBtn);
+        btnGroup.appendChild(resetBtn);
+
+        rowDiv.appendChild(nameSpan);
+        rowDiv.appendChild(btnGroup);
+        rowDiv.appendChild(fileInput);
+        listContainer.appendChild(rowDiv);
+    });
+    document.getElementById('settings-overlay').style.display = 'flex';
+}
+
+function closeSettings() {
+    document.getElementById('settings-overlay').style.display = 'none';
+}
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+showScreen('screen-mode');
+loop();
