@@ -93,7 +93,6 @@ let isMoving = false;
 
 const SPECIAL_COLOR = 'SPECIAL_RAINBOW';
 
-// 落下アニメーション中のオブジェクト管理
 let fallingBubbles = [];
 
 function getRandomColor() {
@@ -151,7 +150,6 @@ function resetBulletPos() {
 }
 
 function checkClearCondition() {
-    // 落下中の玉がすべて消えるまでクリア判定を待つ
     if (fallingBubbles.length > 0) return;
 
     let hasBreakable = false;
@@ -216,8 +214,8 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
-        // レインボーボタンのタップ判定（画面左下）
-        if (pos.x >= 15 && pos.x <= 145 && pos.y >= canvas.height - 55 && pos.y <= canvas.height - 15) {
+        // 上部右側の「レインボーボタン」のタップ判定
+        if (pos.x >= 285 && pos.x <= 385 && pos.y >= 32 && pos.y <= 60) {
             if (rainbowUsesLeft > 0) {
                 bulletColor = SPECIAL_COLOR;
                 rainbowUsesLeft--;
@@ -291,16 +289,15 @@ function releaseBullet() {
 }
 
 function getPixelCoords(r, c) {
-    let topMargin = 55;
+    let topMargin = 70; // 上部UI拡張分に合わせる
     let offsetX = (r % 2 === 1) ? RADIUS : 0;
     let x = c * DIAMETER + RADIUS + offsetX;
     let y = r * ROW_HEIGHT + RADIUS + topMargin;
     return { x, y };
 }
 
-// 衝突位置から最も適切な空きグリッドセルを逆算する（すり抜けバグ修正版）
 function findNearestAvailableCell(x, y) {
-    let topMargin = 55;
+    let topMargin = 70;
     let bestR = 0, bestC = 0;
     let minDist = Infinity;
 
@@ -350,7 +347,6 @@ function removeFloating() {
             if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR && !visited.has(`${r},${c}`)) {
                 let color = grid[r][c];
                 let pos = getPixelCoords(r, c);
-                // 落下オブジェクトとして追加（物理落下アニメーション用）
                 fallingBubbles.push({
                     x: pos.x,
                     y: pos.y,
@@ -377,11 +373,10 @@ function markConnected(r, c, color, visited) {
 }
 
 function update() {
-    // 落下アニメーションの更新
     for (let i = fallingBubbles.length - 1; i >= 0; i--) {
         let fb = fallingBubbles[i];
         fb.y += fb.vy;
-        fb.vy += 0.6; // 重力加速度
+        fb.vy += 0.6;
         if (fb.y > canvas.height + 50) {
             fallingBubbles.splice(i, 1);
         }
@@ -410,8 +405,7 @@ function update() {
             bulletVX *= -1;
         }
 
-        // 最上部に到達したとき
-        if (bulletY - RADIUS <= 55) {
+        if (bulletY - RADIUS <= 70) {
             snapBullet();
             return;
         }
@@ -518,25 +512,41 @@ function draw() {
         return;
     }
 
-    // --- 上部UI枠（ステージ、スコア、NEXT玉） ---
+    // --- 上部UI枠（ステージ、スコア、NEXT玉、レインボーボタン） ---
     ctx.fillStyle = "#111";
-    ctx.fillRect(0, 0, canvas.width, 50);
+    ctx.fillRect(0, 0, canvas.width, 65);
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(0, 50);
-    ctx.lineTo(canvas.width, 50);
+    ctx.moveTo(0, 65);
+    ctx.lineTo(canvas.width, 65);
     ctx.stroke();
 
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 14px sans-serif";
-    ctx.fillText(`ステージ: ${currentStage}/10`, 15, 30);
-    ctx.fillText(`スコア: ${score}`, 145, 30);
+    ctx.font = "bold 13px sans-serif";
+    ctx.fillText(`ステージ: ${currentStage}/10`, 10, 27);
+    ctx.fillText(`スコア: ${score}`, 10, 48);
 
+    // NEXT表示
     ctx.fillStyle = "#aaa";
-    ctx.font = "11px sans-serif";
-    ctx.fillText("NEXT", 280, 20);
-    drawBubble(320, 25, nextColor, 15);
+    ctx.font = "10px sans-serif";
+    ctx.fillText("NEXT", 155, 20);
+    drawBubble(170, 38, nextColor, 14);
+
+    // レインボー玉使用ボタン（上部右側へ統合）
+    let btnBg = rainbowUsesLeft > 0 ? "#8a2be2" : "#333";
+    ctx.fillStyle = btnBg;
+    ctx.beginPath();
+    ctx.roundRect(220, 20, 168, 38, 8);
+    ctx.fill();
+    ctx.strokeStyle = rainbowUsesLeft > 0 ? "#fff" : "#555";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.closePath();
+
+    ctx.fillStyle = rainbowUsesLeft > 0 ? "#fff" : "#777";
+    ctx.font = "bold 12px sans-serif";
+    ctx.fillText(`★レインボー(${rainbowUsesLeft})`, 233, 43);
 
     // --- フィールド内のバブル描画 ---
     for (let r = 0; r < ROWS; r++) {
@@ -553,24 +563,10 @@ function draw() {
         }
     }
 
-    // --- 落下中のバブルの描画 ---
+    // --- 落下中のバブル描画 ---
     for (let fb of fallingBubbles) {
         drawBubble(fb.x, fb.y, fb.color, RADIUS);
     }
-
-    // --- レインボー専用ボタンの描画（画面左下） ---
-    ctx.fillStyle = rainbowUsesLeft > 0 ? "#8a2be2" : "#444";
-    ctx.beginPath();
-    ctx.roundRect(15, canvas.height - 55, 130, 40, 10);
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.closePath();
-
-    ctx.fillStyle = rainbowUsesLeft > 0 ? "#fff" : "#888";
-    ctx.font = "bold 12px sans-serif";
-    ctx.fillText(`★レインボー(${rainbowUsesLeft})`, 25, canvas.height - 30);
 
     // --- 発射台の玉と引っ張り・ガイド・飛行中描画 ---
     if (isDragging) {
@@ -627,7 +623,7 @@ function draw() {
 function drawTitleScreen() {
     ctx.fillStyle = "#aaa";
     ctx.font = "bold 14px sans-serif";
-    ctx.fillText("Ver.1.03", 15, 25);
+    ctx.fillText("Ver.1.04", 15, 25);
 
     ctx.fillStyle = "#ff4da6";
     ctx.font = "bold 30px sans-serif";
@@ -684,7 +680,7 @@ function drawBubble(x, y, color, r) {
         ctx.stroke();
         
         ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 14px sans-serif";
+        ctx.font = "bold 13px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText("★", x, y);
