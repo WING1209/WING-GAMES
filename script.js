@@ -1,1007 +1,110 @@
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+// ==========================================
+// 1. オーディオ（SE / BGM）のプリロード設定
+// ==========================================
+const audioPath = 'audio/';
 
-const ROWS = 12;
-const COLS = 8;
-const RADIUS = 19;
-const DIAMETER = RADIUS * 2;
-const ROW_HEIGHT = RADIUS * Math.sqrt(3);
-
-const BASE_COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
-const COLOR_NAMES = {
-    '#ff4d4d': '赤の玉', '#4da6ff': '青の玉', '#4dff4d': '緑の玉',
-    '#ffff4d': '黄色の玉', '#ff4dda': 'ピンクの玉', 'SPECIAL_BOMB': 'ボム玉(💣)'
+// SE（効果音）の初期化
+const se = {
+  ballShoot:    new Audio(`${audioPath}se/se_ball_shoot.wav`),
+  ballLand:     new Audio(`${audioPath}se/se_ball_land.wav`),
+  bombExplode:  new Audio(`${audioPath}se/se_bomb_explode.wav`),
+  rainbowLand:  new Audio(`${audioPath}se/se_rainbow_land.wav`),
+  rainbowSet:   new Audio(`${audioPath}se/se_rainbow_set.wav`),
+  blockFall:    new Audio(`${audioPath}se/se_block_fall.wav`),
+  gameOver:     new Audio(`${audioPath}se/se_game_over.wav`),
+  stageClear:   new Audio(`${audioPath}se/se_stage_clear.wav`)
 };
-let customImages = {};
-const UNBREAKABLE_COLOR = '#fff';
-const TOP_MARGIN = 80;
 
-let grid = [];
-let score = 0;
-let currentStage = 1;
-const maxStages = 10;
-
-let gameMode = 'single';
-let battleType = ''; // 'タイムアタック' または 'ラリー対戦'
-let targetWins = 1;  // 先に何勝で勝利か (1 または 2)
-let myWins = 0;      // 自分の現在の勝利数
-let opponentWins = 0;// 相手の現在の勝利数
-
-let battleRole = ''; // 'host' または 'guest'
-let roomCode = '';
-let gameState = 'title';
-
-let shooterX = canvas.width / 2;
-let shooterY = canvas.height - 120;
-let bulletX = shooterX;
-let bulletY = shooterY;
-let bulletVX = 0;
-let bulletVY = 0;
-
-const SPECIAL_RAINBOW = 'SPECIAL_RAINBOW';
-const SPECIAL_BOMB = 'SPECIAL_BOMB';
-
-let bulletColor = getRandomShooterColor();
-let nextColor = getRandomShooterColor();
-let bombUsesLeft = 2;
-
-let isDragging = false;
-let dragStartX = 0;
-let dragStartY = 0;
-let pullX = 0;
-let pullY = 0;
-const MAX_PULL_DISTANCE = 120;
-const MIN_SPEED = 8;
-const MAX_SPEED = 24;
-let isMoving = false;
-
-let fallingBubbles = [];
-let flashingBubbles = [];
-let particles = [];
-let battleWinner = '';
-
-// タイマー・ランキング用
-let singleGameStartTime = 0;
-let totalClearTime = 0; // 秒
-
-// PeerJS 通信用
-let peer = null;
-let conn = null;
-const PEER_PREFIX = 'pb-game-room-2026-';
-
-function showScreen(screenId) {
-    document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
-    if (screenId === '') return;
-    let target = document.getElementById(screenId);
-    if (target) {
-        target.style.display = 'flex';
-        if (screenId === 'screen-mode') gameState = 'title';
-    }
+function playSE(sound) {
+  if (sound) {
+    sound.currentTime = 0;
+    sound.play().catch(e => console.log("Audio play blocked:", e));
+  }
 }
 
-function getRandomGridColor() {
-    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
+// BGMの設定（WAVファイル対応）
+const bgmList = [
+  `${audioPath}bgm/bgm_play_01.wav`,
+  `${audioPath}bgm/bgm_play_02.wav`,
+  `${audioPath}bgm/bgm_play_03.wav`,
+  `${audioPath}bgm/bgm_play_04.wav`
+];
+let currentBGM = null;
+
+function playRandomBGM() {
+  const randomIndex = Math.floor(Math.random() * bgmList.length);
+  if (currentBGM) currentBGM.pause();
+  
+  currentBGM = new Audio(bgmList[randomIndex]);
+  currentBGM.loop = true;
+  currentBGM.play().catch(e => console.log("BGM play blocked:", e));
 }
 
-function getRandomShooterColor() {
-    if (Math.random() < 0.08) return SPECIAL_RAINBOW;
-    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
-}
+// ==========================================
+// 2. ゲーム状態管理とホスト待機処理
+// ==========================================
+const GameState = {
+  IDLE: 'IDLE',
+  WAITING: 'WAITING',   // ★相手が入るまでここでストップ
+  PLAYING: 'PLAYING',
+  GAMEOVER: 'GAMEOVER'
+};
 
-function initGridForStage(stage) {
-    grid = [];
-    fallingBubbles = [];
-    flashingBubbles = [];
-    for (let r = 0; r < ROWS; r++) {
-        let row = [];
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let c = 0; c < colsInRow; c++) row.push(null);
-        grid.push(row);
-    }
+let currentState = GameState.IDLE;
+let isHost = false;
 
-    let unbreakableCount = Math.min(COLS * 3, 2 * Math.pow(2, stage - 1));
-    let placedUnbreakable = 0;
-    while (placedUnbreakable < unbreakableCount) {
-        let r = Math.floor(Math.random() * 3);
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        let c = Math.floor(Math.random() * colsInRow);
-        if (grid[r][c] === null) {
-            grid[r][c] = UNBREAKABLE_COLOR;
-            placedUnbreakable++;
-        }
-    }
+const statusText = document.getElementById('status-text');
 
-    for (let r = 0; r < Math.min(ROWS - 4, stage + 1); r++) {
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] === null && Math.random() < 0.65) {
-                grid[r][c] = getRandomGridColor();
-            }
-        }
-    }
-}
-
-// モード選択・ルール選択
-function startSinglePlay() {
-    closeNetwork();
-    gameMode = 'single';
-    gameState = 'playing';
-    score = 0;
-    currentStage = 1;
-    bombUsesLeft = 2;
-    singleGameStartTime = Date.now();
-    initGridForStage(currentStage);
-    spawnBullet();
-    showScreen('');
-}
-
-function selectBattleType(type) {
-    battleType = type;
-    showScreen('screen-win-rule');
-}
-
-function selectWinRule(wins) {
-    targetWins = wins;
-    myWins = 0;
-    opponentWins = 0;
-    document.getElementById('role-select-title').innerText = `${battleType} (${targetWins}勝先取)`;
-    showScreen('screen-role-select');
-}
-
-// 🌐 PeerJS 接続処理
-function setupRole(role) {
-    battleRole = role;
-    closeNetwork();
-
-    if (role === 'host') {
-        roomCode = Math.floor(1000 + Math.random() * 9000).toString();
-        document.getElementById('display-room-code').innerText = roomCode;
-        showScreen('screen-host-wait');
-
-        peer = new Peer(PEER_PREFIX + roomCode);
-        peer.on('connection', (c) => {
-            conn = c;
-            setupConnectionListeners();
-            // ホストから対戦設定を送信
-            setTimeout(() => {
-                if (conn && conn.open) {
-                    conn.send({ type: 'init_config', targetWins: targetWins, battleType: battleType });
-                    startBattleGame();
-                }
-            }, 500);
-        });
-        peer.on('error', () => {
-            alert('接続エラーが発生しました');
-            showScreen('screen-role-select');
-        });
-    } else {
-        showScreen('screen-guest-join');
-        document.getElementById('status-message').innerText = '';
-    }
+function createRoom() {
+  isHost = true;
+  currentState = GameState.WAITING; // 待機状態にする
+  
+  statusText.innerText = "プレイヤー2の参加を待っています...";
+  document.getElementById('btn-host').disabled = true;
+  document.getElementById('btn-join').disabled = true;
 }
 
 function joinRoom() {
-    let code = document.getElementById('input-room-code').value;
-    if (code.length !== 4) {
-        document.getElementById('status-message').innerText = '4桁の数字を入力してください';
-        return;
-    }
-
-    roomCode = code;
-    document.getElementById('status-message').innerText = '接続中...';
-    closeNetwork();
-    peer = new Peer();
-
-    peer.on('open', () => {
-        conn = peer.connect(PEER_PREFIX + roomCode);
-        setupConnectionListeners();
-    });
-    peer.on('error', () => {
-        document.getElementById('status-message').innerText = '部屋が見つからないか接続に失敗しました';
-    });
+  isHost = false;
+  statusText.innerText = "ホストに接続中...";
+  onOpponentConnected();
 }
 
-function setupConnectionListeners() {
-    conn.on('data', (data) => {
-        if (data.type === 'init_config') {
-            targetWins = data.targetWins;
-            battleType = data.battleType;
-            startBattleGame();
-        } else if (data.type === 'attack' && battleType === 'ラリー対戦') {
-            addOjamaBubbles(data.amount);
-        } else if (data.type === 'round_loss') {
-            // 相手がラウンド失敗 -> 自分の1勝
-            myWins++;
-            checkBattleSetEnd('YOU');
-        } else if (data.type === 'next_round') {
-            startNextRound();
-        }
-    });
-
-    conn.on('close', () => {
-        if (gameState === 'playing') {
-            alert('相手との通信が切断されました');
-            returnToTitle();
-        }
-    });
+function onOpponentConnected() {
+  currentState = GameState.PLAYING;
+  statusText.innerText = "対戦開始！";
+  playRandomBGM();
 }
 
-function closeNetwork() {
-    if (conn) conn.close();
-    if (peer) peer.destroy();
-    conn = null;
-    peer = null;
-}
-
-function cancelNetwork(nextScreen) {
-    closeNetwork();
-    showScreen(nextScreen);
-}
-
-function startBattleGame() {
-    gameMode = 'battle';
-    gameState = 'playing';
-    score = 0;
-    currentStage = 1;
-    bombUsesLeft = 2;
-    initGridForStage(currentStage);
-    spawnBullet();
-    showScreen('');
-}
-
-function startNextRound() {
-    bombUsesLeft = 2;
-    initGridForStage(1);
-    spawnBullet();
-    gameState = 'playing';
-    showScreen('');
-}
-
-function sendAttackToOpponent(amount) {
-    if (conn && conn.open && battleType === 'ラリー対戦') {
-        conn.send({ type: 'attack', amount: amount });
-    }
-}
-
-function addOjamaBubbles(amount) {
-    for (let r = 0; r < Math.min(amount, 2); r++) {
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] === null) {
-                grid[r][c] = getRandomGridColor();
-            }
-        }
-    }
-}
-
-function nextStageAction() {
-    if (currentStage < maxStages) {
-        currentStage++;
-        bombUsesLeft = 2;
-        initGridForStage(currentStage);
-        spawnBullet();
-        gameState = 'playing';
-        showScreen('');
-    }
-}
-
-function retryStage() {
-    bombUsesLeft = 2;
-    initGridForStage(currentStage);
-    spawnBullet();
-    gameState = 'playing';
-    showScreen('');
-}
-
-function returnToTitle() {
-    closeNetwork();
-    gameState = 'title';
-    showScreen('screen-mode');
-}
-
-function spawnBullet() {
-    bulletColor = nextColor;
-    nextColor = getRandomShooterColor();
-    resetBulletPos();
-    isMoving = false;
-}
-
-function resetBulletPos() {
-    bulletX = shooterX;
-    bulletY = shooterY;
-    bulletVX = 0;
-    bulletVY = 0;
-    pullX = 0;
-    pullY = 0;
-}
-
-function checkClearCondition() {
-    if (fallingBubbles.length > 0 || flashingBubbles.length > 0) return;
-
-    let hasBreakable = false;
-    for (let r = 0; r < grid.length; r++) {
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR) {
-                hasBreakable = true; break;
-            }
-        }
-        if (hasBreakable) break;
-    }
-
-    if (!hasBreakable) {
-        if (gameMode === 'battle') {
-            myWins++;
-            if (conn && conn.open) conn.send({ type: 'round_loss' });
-            checkBattleSetEnd('YOU');
-        } else {
-            if (currentStage < maxStages) {
-                gameState = 'stage_clear_menu';
-                document.getElementById('clear-score-text').innerText = `ステージ ${currentStage} クリア！ スコア: ${score}`;
-                showScreen('screen-stage-clear');
-            } else {
-                // 🎉 10面全クリア！
-                totalClearTime = Math.floor((Date.now() - singleGameStartTime) / 1000);
-                initParticles();
-                gameState = 'gameclear';
-                showScreen('');
-            }
-        }
-    }
-}
-
-function checkGameOverCondition() {
-    let deadLineRow = ROWS - 2;
-    for (let r = deadLineRow; r < ROWS; r++) {
-        let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let cc = 0; cc < rowCols; cc++) {
-            if (grid[r][cc] !== null) {
-                if (gameMode === 'battle') {
-                    opponentWins++;
-                    if (conn && conn.open) conn.send({ type: 'round_loss' });
-                    checkBattleSetEnd('OPPONENT');
-                } else {
-                    gameState = 'gameover_menu';
-                    document.getElementById('gameover-score-text').innerText = `ステージ ${currentStage} で終了 スコア: ${score}`;
-                    showScreen('screen-game-over');
-                }
-                return;
-            }
-        }
-    }
-}
-
-function checkBattleSetEnd(roundWinner) {
-    if (myWins >= targetWins || opponentWins >= targetWins) {
-        battleWinner = myWins >= targetWins ? 'YOU' : 'OPPONENT';
-        gameState = 'battle_result';
-        showScreen('');
-    } else {
-        alert(`ラウンド終了！ Winner: ${roundWinner}\n現在: あなた ${myWins}勝 - 相手 ${opponentWins}勝`);
-        if (battleRole === 'host' && conn && conn.open) {
-            conn.send({ type: 'next_round' });
-        }
-        startNextRound();
-    }
-}
-
-// 🎆 🎉 キラキラ紙吹雪パーティクル生成
-function initParticles() {
-    particles = [];
-    const colors = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda', '#ffffff', '#ffcc00'];
-    for (let i = 0; i < 120; i++) {
-        particles.push({
-            x: Math.random() * canvas.width,
-            y: Math.random() * canvas.height - canvas.height,
-            size: Math.random() * 8 + 4,
-            color: colors[Math.floor(Math.random() * colors.length)],
-            vx: (Math.random() - 0.5) * 4,
-            vy: Math.random() * 4 + 2,
-            rotation: Math.random() * 360,
-            vRot: (Math.random() - 0.5) * 10
-        });
-    }
-}
-
-function updateParticles() {
-    for (let p of particles) {
-        p.x += p.vx;
-        p.y += p.vy;
-        p.rotation += p.vRot;
-        if (p.y > canvas.height) {
-            p.y = -20;
-            p.x = Math.random() * canvas.width;
-        }
-    }
-}
-
-function drawParticles() {
-    for (let p of particles) {
-        ctx.save();
-        ctx.translate(p.x, p.y);
-        ctx.rotate((p.rotation * Math.PI) / 180);
-        ctx.fillStyle = p.color;
-        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
-        ctx.restore();
-    }
-}
-
-// 🏆 ランキング保存＆表示機能
-function getRankings() {
-    return JSON.parse(localStorage.getItem('pb_rankings') || '[]');
-}
-
-function saveRanking(name, timeSec, scoreVal) {
-    let list = getRankings();
-    list.push({ name: name || 'NO NAME', time: timeSec, score: scoreVal });
-    // スコア降順（同点ならタイム昇順）でソート
-    list.sort((a, b) => b.score - a.score || a.time - b.time);
-    list = list.slice(0, 5);
-    localStorage.setItem('pb_rankings', JSON.stringify(list));
-}
-
-function checkRankIn() {
-    let list = getRankings();
-    if (list.length < 5) return true;
-    let minScore = list[list.length - 1].score;
-    return score > minScore;
-}
-
-function promptNameInput() {
-    if (checkRankIn()) {
-        document.getElementById('rankin-desc-text').innerText = `タイム: ${totalClearTime}秒 / スコア: ${score}`;
-        showScreen('screen-name-input');
-    } else {
-        showRankingBoard();
-    }
-}
-
-function submitScoreAndShowRanking() {
-    let name = document.getElementById('player-name-input').value.trim();
-    saveRanking(name, totalClearTime, score);
-    showRankingBoard();
-}
-
-function showRankingBoard() {
-    let list = getRankings();
-    let tbody = document.getElementById('ranking-list-body');
-    tbody.innerHTML = '';
-    
-    if (list.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="color:#888;">データがありません</td></tr>';
-    } else {
-        list.forEach((item, idx) => {
-            let tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td style="font-weight:bold; color:#ffcc00;">${idx + 1}位</td>
-                <td>${item.name}</td>
-                <td>${item.time}秒</td>
-                <td>${item.score}pt</td>
-            `;
-            tbody.appendChild(tr);
-        });
-    }
-    showScreen('screen-ranking');
-}
-
-function getTouchPos(e) {
-    const rect = canvas.getBoundingClientRect();
-    let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
-    let clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
-    let scaleX = canvas.width / rect.width;
-    let scaleY = canvas.height / rect.height;
-    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
-}
-
-window.addEventListener('touchstart', (e) => {
-    if (gameState === 'playing') e.preventDefault();
-    handleInputStart(getTouchPos(e));
-}, { passive: false });
-
-window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
-
-function handleInputStart(pos) {
-    if (gameState === 'title') return;
-
-    if (gameState === 'gameclear') {
-        promptNameInput();
-        return;
-    }
-    if (gameState === 'battle_result') {
-        returnToTitle();
-        return;
-    }
-
-    if (gameState === 'playing' && !isMoving) {
-        if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
-            openSettings(); return;
-        }
-        if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
-            if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
-            return;
-        }
-
-        isDragging = true;
-        dragStartX = pos.x; dragStartY = pos.y;
-        pullX = 0; pullY = 0;
-    }
-}
-
-window.addEventListener('touchmove', (e) => {
-    if (!isDragging) return;
-    if (e.cancelable) e.preventDefault();
-    handleDragMove(getTouchPos(e));
-}, { passive: false });
-
-window.addEventListener('mousemove', (e) => { if (isDragging) handleDragMove(getTouchPos(e)); });
-
-function handleDragMove(pos) {
-    let dx = pos.x - dragStartX;
-    let dy = pos.y - dragStartY;
-    let dist = Math.hypot(dx, dy);
-    if (dist > MAX_PULL_DISTANCE) {
-        let angle = Math.atan2(dy, dx);
-        dx = Math.cos(angle) * MAX_PULL_DISTANCE;
-        dy = Math.sin(angle) * MAX_PULL_DISTANCE;
-    }
-    pullX = dx; pullY = dy;
-}
-
-window.addEventListener('touchend', () => { if (isDragging) { isDragging = false; releaseBullet(); } });
-window.addEventListener('mouseup', () => { if (isDragging) { isDragging = false; releaseBullet(); } });
-
-function releaseBullet() {
-    let pullDist = Math.hypot(pullX, pullY);
-    if (pullDist < 12) { pullX = 0; pullY = 0; return; }
-
-    let power = Math.min(1.0, pullDist / MAX_PULL_DISTANCE);
-    let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
-    let launchAngle = Math.atan2(-pullY, -pullX);
-    
-    if (launchAngle < -0.05 && launchAngle > -Math.PI + 0.05) {
-        bulletVX = Math.cos(launchAngle) * speed;
-        bulletVY = Math.sin(launchAngle) * speed;
-        isMoving = true;
-    }
-    pullX = 0; pullY = 0;
-}
-
-function getPixelCoords(r, c) {
-    let offsetX = (r % 2 === 1) ? RADIUS : 0;
-    let x = c * DIAMETER + RADIUS + offsetX;
-    let y = r * ROW_HEIGHT + RADIUS + TOP_MARGIN;
-    return { x, y };
-}
-
-function findCellForPosition(x, y) {
-    let bestR = 0, bestC = 0, minDist = Infinity;
-    for (let r = 0; r < ROWS; r++) {
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            let pos = getPixelCoords(r, c);
-            let dist = Math.hypot(x - pos.x, y - pos.y);
-            if (dist < minDist) { minDist = dist; bestR = r; bestC = c; }
-        }
-    }
-    if (grid[bestR][bestC] !== null) {
-        let altMinDist = Infinity, altR = bestR, altC = bestC;
-        for (let r = 0; r < ROWS; r++) {
-            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-            for (let c = 0; c < colsInRow; c++) {
-                if (grid[r][c] === null) {
-                    let pos = getPixelCoords(r, c);
-                    let dist = Math.hypot(x - pos.x, y - pos.y);
-                    if (dist < altMinDist) { altMinDist = dist; altR = r; altC = c; }
-                }
-            }
-        }
-        return { r: altR, c: altC };
-    }
-    return { r: bestR, c: bestC };
-}
-
-function findConnected(r, c, color, visited = new Set()) {
-    let key = `${r},${c}`;
-    if (visited.has(key) || r < 0 || r >= ROWS || c < 0) return [];
-    if (grid[r][c] !== color || grid[r][c] === UNBREAKABLE_COLOR) return [];
-
-    visited.add(key);
-    let matches = [{ r, c }];
-    let neighbors = (r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
-    for (let n of neighbors) matches = matches.concat(findConnected(r + n[0], c + n[1], color, visited));
-    return matches;
-}
-
-function triggerFlashEffect(cellsToFlash, extraScore = 0) {
-    if (cellsToFlash.length === 0) return;
-    flashingBubbles.push({ cells: cellsToFlash, timer: 30 });
-    score += extraScore;
-}
-
-function removeFloating() {
-    let visited = new Set();
-    for (let c = 0; c < COLS; c++) {
-        if (grid[0][c] !== null) markConnectedFromCeiling(0, c, visited);
-    }
-
-    let droppedCount = 0;
-    for (let r = 0; r < ROWS; r++) {
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] !== null && !visited.has(`${r},${c}`)) {
-                let color = grid[r][c];
-                let pos = getPixelCoords(r, c);
-                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: color });
-                grid[r][c] = null;
-                droppedCount++;
-            }
-        }
-    }
-    if (droppedCount > 0) score += droppedCount * 20;
-}
-
-function markConnectedFromCeiling(r, c, visited) {
-    let key = `${r},${c}`;
-    let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-    if (visited.has(key) || r < 0 || r >= ROWS || c < 0 || c >= colsInRow) return;
-    if (grid[r][c] === null) return;
-    visited.add(key);
-    let neighbors = (r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
-    for (let n of neighbors) markConnectedFromCeiling(r + n[0], c + n[1], visited);
-}
-
+// ==========================================
+// 3. ループ処理
+// ==========================================
 function update() {
-    if (gameState === 'gameclear') {
-        updateParticles();
-        return;
-    }
-
-    for (let i = fallingBubbles.length - 1; i >= 0; i--) {
-        let fb = fallingBubbles[i];
-        fb.y += fb.vy; fb.vy += 0.6;
-        if (fb.y > canvas.height + 50) fallingBubbles.splice(i, 1);
-    }
-
-    for (let i = flashingBubbles.length - 1; i >= 0; i--) {
-        flashingBubbles[i].timer--;
-        if (flashingBubbles[i].timer <= 0) {
-            flashingBubbles.splice(i, 1);
-            removeFloating();
-            checkClearCondition();
-        }
-    }
-
-    if (fallingBubbles.length === 0 && flashingBubbles.length === 0 && gameState === 'playing') {
-        checkClearCondition();
-    }
-
-    if (gameState === 'playing' && isMoving) {
-        bulletX += bulletVX;
-        bulletY += bulletVY;
-
-        if (bulletX - RADIUS < 0) { bulletX = RADIUS; bulletVX *= -1; }
-        else if (bulletX + RADIUS > canvas.width) { bulletX = canvas.width - RADIUS; bulletVX *= -1; }
-
-        if (bulletY - RADIUS <= TOP_MARGIN) {
-            bulletY = TOP_MARGIN + RADIUS;
-            snapBullet();
-            return;
-        }
-
-        for (let r = 0; r < ROWS; r++) {
-            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-            for (let c = 0; c < colsInRow; c++) {
-                if (grid[r][c] !== null) {
-                    let pos = getPixelCoords(r, c);
-                    if (Math.hypot(bulletX - pos.x, bulletY - pos.y) < DIAMETER - 3) {
-                        snapBullet();
-                        return;
-                    }
-                }
-            }
-        }
-    }
-}
-
-function snapBullet() {
-    isMoving = false;
-    let cell = findCellForPosition(bulletX, bulletY);
-    
-    if (cell.r >= 0 && cell.r < ROWS) {
-        let colsInRow = (cell.r % 2 === 0) ? COLS : COLS - 1;
-        cell.c = Math.max(0, Math.min(colsInRow - 1, cell.c));
-
-        if (grid[cell.r][cell.c] === null) {
-            if (bulletColor === SPECIAL_BOMB) {
-                let affectedCells = [{ r: cell.r, c: cell.c }];
-                let neighbors = (cell.r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
-                for (let n of neighbors) {
-                    let nr = cell.r + n[0], nc = cell.c + n[1];
-                    let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
-                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc] !== UNBREAKABLE_COLOR) {
-                        affectedCells.push({ r: nr, c: nc });
-                    }
-                }
-                let flashList = [];
-                for (let ac of affectedCells) {
-                    if (grid[ac.r][ac.c] !== null && grid[ac.r][ac.c] !== UNBREAKABLE_COLOR) {
-                        flashList.push({ r: ac.r, c: ac.c });
-                        grid[ac.r][ac.c] = null;
-                    }
-                }
-                triggerFlashEffect(flashList, flashList.length * 40);
-                if (flashList.length >= 4) sendAttackToOpponent(2);
-            } else if (bulletColor === SPECIAL_RAINBOW) {
-                let targetColor = null;
-                let neighbors = (cell.r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
-                for (let n of neighbors) {
-                    let nr = cell.r + n[0], nc = cell.c + n[1];
-                    let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
-                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc] !== UNBREAKABLE_COLOR) {
-                        targetColor = grid[nr][nc]; break;
-                    }
-                }
-                if (targetColor !== null) {
-                    let clearedCount = 0;
-                    for (let r = 0; r < ROWS; r++) {
-                        let rCols = (r % 2 === 0) ? COLS : COLS - 1;
-                        for (let c = 0; c < rCols; c++) {
-                            if (grid[r][c] === targetColor) {
-                                let pos = getPixelCoords(r, c);
-                                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: targetColor });
-                                grid[r][c] = null; clearedCount++;
-                            }
-                        }
-                    }
-                    score += clearedCount * 30;
-                    if (clearedCount >= 4) sendAttackToOpponent(2);
-                    removeFloating();
-                }
-            } else {
-                grid[cell.r][cell.c] = bulletColor;
-                let matches = findConnected(cell.r, cell.c, bulletColor);
-                if (matches.length >= 3) {
-                    for (let m of matches) {
-                        let pos = getPixelCoords(m.r, m.c);
-                        fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: bulletColor });
-                        grid[m.r][m.c] = null; score += 10;
-                    }
-                    if (matches.length >= 4) sendAttackToOpponent(1);
-                    removeFloating();
-                }
-            }
-        }
-    }
-    
-    spawnBullet();
-    checkClearCondition();
-    checkGameOverCondition();
+  if (currentState !== GameState.PLAYING) return;
+  // ここにゲームの動的処理を記述
 }
 
 function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (gameState === 'title') { drawTitleBackground(); return; }
-    if (gameState === 'gameclear') { drawGameClearScreen(); return; }
-    if (gameState === 'battle_result') { drawBattleResultScreen(); return; }
-
-    ctx.fillStyle = "#111";
-    ctx.fillRect(0, 0, canvas.width, TOP_MARGIN);
-    ctx.strokeStyle = "#444";
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, TOP_MARGIN); ctx.lineTo(canvas.width, TOP_MARGIN); ctx.stroke();
-
+  if (currentState === GameState.WAITING) {
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 12px sans-serif";
-    if (gameMode === 'battle') {
-        ctx.fillText(`対戦(${targetWins}勝先取): ${myWins} - ${opponentWins}`, 12, 28);
-    } else {
-        ctx.fillText(`STAGE ${currentStage}/10`, 12, 28);
-    }
-    ctx.fillText(`SCORE: ${score}`, 12, 52);
-
-    ctx.fillStyle = "#aaa";
-    ctx.font = "bold 10px sans-serif";
-    ctx.fillText("NEXT", 118, 22);
-    drawBubble(130, 48, nextColor, 15);
-
-    let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
-    ctx.fillStyle = btnBg;
-    ctx.beginPath(); ctx.roundRect(165, 14, 125, 52, 10); ctx.fill();
-    ctx.strokeStyle = bombUsesLeft > 0 ? "#fff" : "#555"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
-
-    ctx.fillStyle = bombUsesLeft > 0 ? "#fff" : "#777";
-    ctx.font = "bold 14px sans-serif";
-    ctx.fillText(`💣ボム (${bombUsesLeft})`, 180, 45);
-
-    ctx.fillStyle = "#333";
-    ctx.beginPath(); ctx.roundRect(305, 14, 85, 52, 10); ctx.fill();
-    ctx.strokeStyle = "#888"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
-
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 13px sans-serif";
-    ctx.fillText("⚙️ 設定", 320, 45);
-
-    for (let r = 0; r < ROWS; r++) {
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] !== null) {
-                let pos = getPixelCoords(r, c);
-                if (grid[r][c] === UNBREAKABLE_COLOR) drawUnbreakableBubble(pos.x, pos.y, RADIUS);
-                else drawBubble(pos.x, pos.y, grid[r][c], RADIUS);
-            }
-        }
-    }
-
-    for (let fb of flashingBubbles) {
-        let phase = Math.floor(fb.timer / 10);
-        let flashColor = (phase === 1) ? "#ff0000" : "#ffffff";
-        for (let ac of fb.cells) {
-            let pos = getPixelCoords(ac.r, ac.c);
-            ctx.beginPath(); ctx.arc(pos.x, pos.y, RADIUS - 1, 0, Math.PI * 2);
-            ctx.fillStyle = flashColor; ctx.fill(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.stroke(); ctx.closePath();
-        }
-    }
-
-    for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS);
-
-    if (isDragging) {
-        let pullDist = Math.hypot(pullX, pullY);
-        if (pullDist > 8) {
-            let launchAngle = Math.atan2(-pullY, -pullX);
-            let guideLength = 220;
-            ctx.beginPath(); ctx.moveTo(shooterX, shooterY);
-            ctx.lineTo(shooterX + Math.cos(launchAngle) * guideLength, shooterY + Math.sin(launchAngle) * guideLength);
-            ctx.strokeStyle = 'rgba(255, 204, 0, 0.95)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8]); ctx.stroke(); ctx.setLineDash([]); ctx.closePath();
-        }
-        ctx.beginPath(); ctx.moveTo(shooterX, shooterY); ctx.lineTo(shooterX + pullX, shooterY + pullY);
-        ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 4; ctx.stroke(); ctx.closePath();
-        drawBubble(shooterX + pullX, shooterY + pullY, bulletColor, RADIUS);
-    } else if (isMoving) {
-        drawBubble(bulletX, bulletY, bulletColor, RADIUS);
-    } else {
-        drawBubble(shooterX, shooterY, bulletColor, RADIUS);
-    }
-}
-
-function drawTitleBackground() {
-    ctx.fillStyle = "#1a1a1a";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("オンライン対戦＆ランキング Ver.3.0", 15, 30);
-}
-
-// 🎉 10面クリア演出（CONGRATULATIONS! ＆ パーティクル）
-function drawGameClearScreen() {
-    ctx.fillStyle = "#111";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    drawParticles();
-
-    ctx.save();
+    ctx.font = "24px sans-serif";
     ctx.textAlign = "center";
-
-    // ポップなグラデーション風文字
-    ctx.font = "900 28px 'Segoe UI', sans-serif";
-    ctx.fillStyle = "#ff007f";
-    ctx.fillText("CONGRATULATIONS!", canvas.width / 2 + 3, canvas.height / 2 - 50 + 3);
-    ctx.fillStyle = "#ffcc00";
-    ctx.fillText("CONGRATULATIONS!", canvas.width / 2, canvas.height / 2 - 50);
-
-    ctx.font = "bold 20px sans-serif";
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText(`ALL CLEAR!`, canvas.width / 2, canvas.height / 2 + 10);
-    ctx.fillText(`TIME: ${totalClearTime}s / SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 45);
-
-    ctx.font = "14px sans-serif";
-    ctx.fillStyle = "#4da6ff";
-    ctx.fillText("画面をタップして次へ ➔", canvas.width / 2, canvas.height / 2 + 100);
-
-    ctx.restore();
+    ctx.fillText("フレンドの参加を待っています...", canvas.width / 2, canvas.height / 2);
+  } else if (currentState === GameState.PLAYING) {
+    ctx.fillStyle = "#0f0";
+    ctx.font = "20px sans-serif";
+    ctx.fillText("対戦中！", 50, 30);
+  }
 }
 
-function drawBattleResultScreen() {
-    ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#ffcc00"; ctx.font = "bold 32px sans-serif"; ctx.textAlign = "center";
-    ctx.fillText(`${battleWinner} WIN!`, canvas.width / 2, canvas.height / 2 - 40);
-    ctx.fillStyle = "#4da6ff"; ctx.font = "14px sans-serif"; ctx.fillText("画面をタップしてタイトルへ", canvas.width / 2, canvas.height / 2 + 20);
-    ctx.textAlign = "left";
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
 }
 
-function drawBubble(x, y, color, r) {
-    if (customImages[color]) {
-        ctx.save();
-        ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.clip();
-        ctx.drawImage(customImages[color], x - r, y - r, r * 2, r * 2);
-        ctx.restore();
-        ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
-        return;
-    }
-    ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2);
-    if (color === SPECIAL_RAINBOW) {
-        let colorIndex = Math.floor(Date.now() / 150) % BASE_COLORS.length;
-        ctx.fillStyle = BASE_COLORS[colorIndex]; ctx.fill(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.stroke();
-        ctx.fillStyle = "#ffffff"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText("★", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-    } else if (color === SPECIAL_BOMB) {
-        ctx.fillStyle = "#333"; ctx.fill(); ctx.strokeStyle = "#ff5722"; ctx.lineWidth = 3; ctx.stroke();
-        ctx.fillStyle = "#ff5722"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText("💣", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-    } else {
-        ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
-    }
-    ctx.closePath();
-}
-
-function drawUnbreakableBubble(x, y, r) {
-    ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.fillStyle = UNBREAKABLE_COLOR; ctx.fill();
-    ctx.strokeStyle = "#aaa"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
-    let offset = 6;
-    ctx.beginPath(); ctx.moveTo(x - offset, y - offset); ctx.lineTo(x + offset, y + offset);
-    ctx.moveTo(x + offset, y - offset); ctx.lineTo(x - offset, y + offset);
-    ctx.strokeStyle = "#ff3333"; ctx.lineWidth = 2.5; ctx.stroke(); ctx.closePath();
-}
-
-function openSettings() {
-    let listContainer = document.getElementById('settings-list');
-    listContainer.innerHTML = '';
-    [...BASE_COLORS, SPECIAL_BOMB].forEach(col => {
-        let rowDiv = document.createElement('div');
-        rowDiv.style.cssText = "display:flex; align-items:center; justify-content:space-between; width:92%; background:#222; padding:10px 12px; margin:6px 0; border-radius:8px;";
-        
-        let nameSpan = document.createElement('span');
-        nameSpan.style.cssText = "font-size:13px; font-weight:bold;";
-        nameSpan.innerText = COLOR_NAMES[col] || col;
-
-        let btnGroup = document.createElement('div');
-        btnGroup.style.cssText = "display:flex; gap:8px;";
-
-        let uploadBtn = document.createElement('button');
-        uploadBtn.className = 'menu-btn sub';
-        uploadBtn.style.cssText = "padding:8px 12px; font-size:12px; width:auto; margin:0;";
-        uploadBtn.innerText = '📷 変更';
-
-        let resetBtn = document.createElement('button');
-        resetBtn.className = 'menu-btn danger';
-        resetBtn.style.cssText = "padding:8px 10px; font-size:12px; width:auto; margin:0;";
-        resetBtn.innerText = '🔄';
-        resetBtn.onclick = () => { delete customImages[col]; openSettings(); };
-        
-        let fileInput = document.createElement('input');
-        fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.display = 'none';
-        fileInput.onchange = (e) => {
-            let file = e.target.files[0];
-            if (file) {
-                let reader = new FileReader();
-                reader.onload = (event) => {
-                    let img = new Image();
-                    img.onload = () => { customImages[col] = img; openSettings(); };
-                    img.src = event.target.result;
-                };
-                reader.readAsDataURL(file);
-            }
-        };
-        uploadBtn.onclick = () => fileInput.click();
-
-        btnGroup.appendChild(uploadBtn);
-        btnGroup.appendChild(resetBtn);
-
-        rowDiv.appendChild(nameSpan);
-        rowDiv.appendChild(btnGroup);
-        rowDiv.appendChild(fileInput);
-        listContainer.appendChild(rowDiv);
-    });
-    document.getElementById('settings-overlay').style.display = 'flex';
-}
-
-function closeSettings() {
-    document.getElementById('settings-overlay').style.display = 'none';
-}
-
-function loop() {
-    update();
-    draw();
-    requestAnimationFrame(loop);
-}
-
-showScreen('screen-mode');
-loop();
+gameLoop();
