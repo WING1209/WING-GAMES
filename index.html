@@ -79,7 +79,6 @@
             width: 85%;
             max-width: 280px;
             cursor: pointer;
-            active-transform: scale(0.96);
         }
         .menu-btn:active {
             transform: scale(0.96);
@@ -214,7 +213,7 @@ const COLOR_NAMES = {
 };
 let customImages = {};
 const UNBREAKABLE_COLOR = '#fff';
-const TOP_MARGIN = 80; // スマホヘッダーをゆったり広めに確保
+const TOP_MARGIN = 80;
 
 let grid = [];
 let score = 0;
@@ -398,6 +397,7 @@ function resetBulletPos() {
     pullY = 0;
 }
 
+/* クリア条件の判定：消せるブロック（壊せないブロック以外）が無くなったかを判定 */
 function checkClearCondition() {
     if (fallingBubbles.length > 0 || flashingBubbles.length > 0) return;
 
@@ -405,6 +405,7 @@ function checkClearCondition() {
     for (let r = 0; r < grid.length; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
+            // UNBREAKABLE_COLOR(壊せないブロック) 以外の通常玉が存在するかをチェック
             if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR) {
                 hasBreakable = true;
                 break;
@@ -413,6 +414,7 @@ function checkClearCondition() {
         if (hasBreakable) break;
     }
 
+    // 消せるブロックがすべて消えている場合、壊せないブロックが残っていてもクリア
     if (!hasBreakable) {
         if (gameMode === 'battle') {
             triggerBattleWin('Player 1 (あなた)');
@@ -452,7 +454,6 @@ function triggerBattleWin(winnerName) {
     gameState = 'battle_result';
 }
 
-/* スマホのタッチ座標を取得 */
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
@@ -462,7 +463,6 @@ function getTouchPos(e) {
     return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
 }
 
-/* タッチ開始イベント */
 window.addEventListener('touchstart', (e) => {
     if (gameState === 'playing') e.preventDefault();
     handleInputStart(getTouchPos(e));
@@ -479,13 +479,10 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
-        // スマホ向けボタン判定（押しやすく広い当たり判定領域）
-        // ⚙️ 設定ボタン（右上面積を広く確保）
         if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
             openSettings();
             return;
         }
-        // 💣 ボムボタン（中央上面積を広く確保）
         if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
             if (bombUsesLeft > 0) {
                 bulletColor = SPECIAL_BOMB;
@@ -494,7 +491,6 @@ function handleInputStart(pos) {
             return;
         }
 
-        // スマホ用に画面のどこを触って引っ張っても狙える仕様に
         isDragging = true;
         dragStartX = pos.x;
         dragStartY = pos.y;
@@ -503,7 +499,6 @@ function handleInputStart(pos) {
     }
 }
 
-/* タッチ移動イベント */
 window.addEventListener('touchmove', (e) => {
     if (!isDragging) return;
     if (e.cancelable) e.preventDefault();
@@ -525,7 +520,6 @@ function handleDragMove(pos) {
     pullY = dy;
 }
 
-/* タッチ離した（発射）イベント */
 window.addEventListener('touchend', (e) => {
     if (isDragging) {
         isDragging = false;
@@ -542,7 +536,6 @@ function releaseBullet() {
     let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
     let launchAngle = Math.atan2(-pullY, -pullX);
     
-    // 上方向へのショットのみ許可
     if (launchAngle < -0.05 && launchAngle > -Math.PI + 0.05) {
         bulletVX = Math.cos(launchAngle) * speed;
         bulletVY = Math.sin(launchAngle) * speed;
@@ -657,6 +650,10 @@ function update() {
         }
     }
 
+    if (fallingBubbles.length === 0 && flashingBubbles.length === 0 && gameState === 'playing') {
+        checkClearCondition();
+    }
+
     if (gameState === 'playing' && isMoving) {
         bulletX += bulletVX;
         bulletY += bulletVY;
@@ -764,26 +761,22 @@ function draw() {
     if (gameState === 'gameclear') { drawGameClearScreen(); return; }
     if (gameState === 'battle_result') { drawBattleResultScreen(); return; }
 
-    /* スマホ向けヘッダー描画 */
     ctx.fillStyle = "#111";
     ctx.fillRect(0, 0, canvas.width, TOP_MARGIN);
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, TOP_MARGIN); ctx.lineTo(canvas.width, TOP_MARGIN); ctx.stroke();
 
-    // ステージ＆スコア表示
     ctx.fillStyle = "#fff";
     ctx.font = "bold 13px sans-serif";
     ctx.fillText(gameMode === 'battle' ? `対戦: ${battleType}` : `STAGE ${currentStage}/10`, 12, 28);
     ctx.fillText(`SCORE: ${score}`, 12, 52);
 
-    // NEXT表示
     ctx.fillStyle = "#aaa";
     ctx.font = "bold 10px sans-serif";
     ctx.fillText("NEXT", 118, 22);
     drawBubble(130, 48, nextColor, 15);
 
-    // スマホ特化：ボム玉ボタン（大きめ）
     let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
     ctx.fillStyle = btnBg;
     ctx.beginPath(); ctx.roundRect(165, 14, 125, 52, 10); ctx.fill();
@@ -793,7 +786,6 @@ function draw() {
     ctx.font = "bold 14px sans-serif";
     ctx.fillText(`💣ボム (${bombUsesLeft})`, 180, 45);
 
-    // スマホ特化：設定ボタン（大きめ）
     ctx.fillStyle = "#333";
     ctx.beginPath(); ctx.roundRect(305, 14, 85, 52, 10); ctx.fill();
     ctx.strokeStyle = "#888"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
@@ -802,7 +794,6 @@ function draw() {
     ctx.font = "bold 13px sans-serif";
     ctx.fillText("⚙️ 設定", 320, 45);
 
-    // 盤面描画
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -826,12 +817,11 @@ function draw() {
 
     for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS);
 
-    // タッチ＆スワイプ（引いて狙う）操作ガイドの描画
     if (isDragging) {
         let pullDist = Math.hypot(pullX, pullY);
         if (pullDist > 8) {
             let launchAngle = Math.atan2(-pullY, -pullX);
-            let guideLength = 220; // 予測線を長く伸ばして見やすく
+            let guideLength = 220;
             ctx.beginPath(); ctx.moveTo(shooterX, shooterY);
             ctx.lineTo(shooterX + Math.cos(launchAngle) * guideLength, shooterY + Math.sin(launchAngle) * guideLength);
             ctx.strokeStyle = 'rgba(255, 204, 0, 0.95)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8]); ctx.stroke(); ctx.setLineDash([]); ctx.closePath();
@@ -849,7 +839,7 @@ function draw() {
 function drawTitleBackground() {
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("スマホ特化 Ver.1.30", 15, 30);
+    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("スマホ特化 Ver.1.31", 15, 30);
 }
 
 function drawGameClearScreen() {
