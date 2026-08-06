@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>パズルボブル風 Ver1.10</title>
+    <title>パズルボブル風 スマホ特化版</title>
     <style>
         body {
             margin: 0;
@@ -160,7 +160,9 @@ function checkClearCondition() {
 
     let hasBreakable = false;
     for (let r = 0; r < grid.length; r++) {
-        for (let c = 0; c < grid[r].length; c++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            // 消えない玉(UNBREAKABLE_COLOR)以外の普通の玉が1つでも残っていたらクリアではない
             if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR) {
                 hasBreakable = true;
                 break;
@@ -169,6 +171,7 @@ function checkClearCondition() {
         if (hasBreakable) break;
     }
 
+    // 消せる玉がすべてなくなっていれば、消えない玉が残っていてもクリア
     if (!hasBreakable) {
         if (currentStage < maxStages) {
             gameState = 'clear_anim';
@@ -300,7 +303,6 @@ function getPixelCoords(r, c) {
     return { x, y };
 }
 
-// 弾の現在位置から一番適切なグリッド位置を厳密に逆算する
 function findCellForPosition(x, y) {
     let bestR = 0, bestC = 0;
     let minDist = Infinity;
@@ -318,7 +320,6 @@ function findCellForPosition(x, y) {
         }
     }
 
-    // すでにそのセルが埋まっている場合は、空いている周囲の最も近いセルを探す
     if (grid[bestR][bestC] !== null) {
         let altMinDist = Infinity;
         let altR = bestR, altC = bestC;
@@ -448,7 +449,6 @@ function update() {
         bulletX += bulletVX;
         bulletY += bulletVY;
 
-        // 左右の壁での反射
         if (bulletX - RADIUS < 0) {
             bulletX = RADIUS;
             bulletVX *= -1;
@@ -457,14 +457,12 @@ function update() {
             bulletVX *= -1;
         }
 
-        // --- 最上部（天井ライン：TOP_MARGIN）に到達したときの壁判定 ---
         if (bulletY - RADIUS <= TOP_MARGIN) {
-            bulletY = TOP_MARGIN + RADIUS; // 天井のラインにぴったり合わせる
+            bulletY = TOP_MARGIN + RADIUS;
             snapBullet();
             return;
         }
 
-        // 既存の玉との接触判定
         for (let r = 0; r < ROWS; r++) {
             let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
             for (let c = 0; c < colsInRow; c++) {
@@ -597,7 +595,6 @@ function draw() {
         return;
     }
 
-    // 上部UI背景
     ctx.fillStyle = "#111";
     ctx.fillRect(0, 0, canvas.width, TOP_MARGIN);
     ctx.strokeStyle = "#444";
@@ -617,7 +614,6 @@ function draw() {
     ctx.fillText("NEXT", 155, 20);
     drawBubble(170, 38, nextColor, 14);
 
-    // ボム玉スキルボタン
     let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
     ctx.fillStyle = btnBg;
     ctx.beginPath();
@@ -646,7 +642,6 @@ function draw() {
         }
     }
 
-    // フラッシュ消滅演出の描画
     for (let fb of flashingBubbles) {
         let phase = Math.floor(fb.timer / 10);
         let flashColor = "#ffffff";
@@ -722,7 +717,7 @@ function draw() {
 function drawTitleScreen() {
     ctx.fillStyle = "#aaa";
     ctx.font = "bold 14px sans-serif";
-    ctx.fillText("Ver.1.10", 15, 25);
+    ctx.fillText("Ver.1.11", 15, 25);
 
     ctx.fillStyle = "#ff4da6";
     ctx.font = "bold 30px sans-serif";
