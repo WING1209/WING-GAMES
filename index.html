@@ -67,9 +67,9 @@ const maxStages = 10;
 let gameState = 'title'; // 'title', 'playing', 'clear_anim', 'gameclear'
 let clearTimer = 0;
 
-// 発射台を画面内できっちり見える位置へ上方修正
+// 発射台の位置
 let shooterX = canvas.width / 2;
-let shooterY = canvas.height - 95;
+let shooterY = canvas.height - 125;
 
 let bulletX = shooterX;
 let bulletY = shooterY;
@@ -77,6 +77,9 @@ let bulletVX = 0;
 let bulletVY = 0;
 let bulletColor = getRandomColor();
 let nextColor = getRandomColor();
+
+// レインボー玉の回数制限（ゲーム中計2回）
+let rainbowUsesLeft = 2;
 
 let isDragging = false;
 let dragStartX = 0;
@@ -88,12 +91,18 @@ const MIN_SPEED = 7;
 const MAX_SPEED = 22;
 let isMoving = false;
 
+const SPECIAL_COLOR = 'SPECIAL_RAINBOW';
+
+// 落下アニメーション中のオブジェクト管理
+let fallingBubbles = [];
+
 function getRandomColor() {
     return COLORS[Math.floor(Math.random() * COLORS.length)];
 }
 
 function initGridForStage(stage) {
     grid = [];
+    fallingBubbles = [];
     for (let r = 0; r < ROWS; r++) {
         let row = [];
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
@@ -142,6 +151,9 @@ function resetBulletPos() {
 }
 
 function checkClearCondition() {
+    // 落下中の玉がすべて消えるまでクリア判定を待つ
+    if (fallingBubbles.length > 0) return;
+
     let hasBreakable = false;
     for (let r = 0; r < grid.length; r++) {
         for (let c = 0; c < grid[r].length; c++) {
@@ -191,6 +203,7 @@ function handleInputStart(pos) {
             gameState = 'playing';
             score = 0;
             currentStage = 1;
+            rainbowUsesLeft = 2;
             initGridForStage(currentStage);
             spawnBullet();
         }
@@ -203,6 +216,15 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
+        // レインボーボタンのタップ判定（画面左下）
+        if (pos.x >= 15 && pos.x <= 145 && pos.y >= canvas.height - 55 && pos.y <= canvas.height - 15) {
+            if (rainbowUsesLeft > 0) {
+                bulletColor = SPECIAL_COLOR;
+                rainbowUsesLeft--;
+            }
+            return;
+        }
+
         isDragging = true;
         dragStartX = pos.x;
         dragStartY = pos.y;
@@ -268,23 +290,35 @@ function releaseBullet() {
     pullY = 0;
 }
 
-function getGridCoords(x, y) {
-    let topMargin = 55;
-    let r = Math.round((y - topMargin - RADIUS) / ROW_HEIGHT);
-    r = Math.max(0, Math.min(ROWS - 1, r));
-    let offsetX = (r % 2 === 1) ? RADIUS : 0;
-    let c = Math.round((x - RADIUS - offsetX) / DIAMETER);
-    let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-    c = Math.max(0, Math.min(colsInRow - 1, c));
-    return { r, c };
-}
-
 function getPixelCoords(r, c) {
     let topMargin = 55;
     let offsetX = (r % 2 === 1) ? RADIUS : 0;
     let x = c * DIAMETER + RADIUS + offsetX;
     let y = r * ROW_HEIGHT + RADIUS + topMargin;
     return { x, y };
+}
+
+// 衝突位置から最も適切な空きグリッドセルを逆算する（すり抜けバグ修正版）
+function findNearestAvailableCell(x, y) {
+    let topMargin = 55;
+    let bestR = 0, bestC = 0;
+    let minDist = Infinity;
+
+    for (let r = 0; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] === null) {
+                let pos = getPixelCoords(r, c);
+                let dist = Math.hypot(x - pos.x, y - pos.y);
+                if (dist < minDist) {
+                    minDist = dist;
+                    bestR = r;
+                    bestC = c;
+                }
+            }
+        }
+    }
+    return { r: bestR, c: bestC };
 }
 
 function findConnected(r, c, color, visited = new Set()) {
@@ -309,10 +343,20 @@ function removeFloating() {
     for (let c = 0; c < grid[0].length; c++) {
         if (grid[0][c] !== null) markConnected(0, c, grid[0][c], visited);
     }
+
     let droppedCount = 0;
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < grid[r].length; c++) {
             if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR && !visited.has(`${r},${c}`)) {
+                let color = grid[r][c];
+                let pos = getPixelCoords(r, c);
+                // 落下オブジェクトとして追加（物理落下アニメーション用）
+                fallingBubbles.push({
+                    x: pos.x,
+                    y: pos.y,
+                    vy: 2 + Math.random() * 2,
+                    color: color
+                });
                 grid[r][c] = null;
                 droppedCount++;
             }
@@ -333,6 +377,16 @@ function markConnected(r, c, color, visited) {
 }
 
 function update() {
+    // 落下アニメーションの更新
+    for (let i = fallingBubbles.length - 1; i >= 0; i--) {
+        let fb = fallingBubbles[i];
+        fb.y += fb.vy;
+        fb.vy += 0.6; // 重力加速度
+        if (fb.y > canvas.height + 50) {
+            fallingBubbles.splice(i, 1);
+        }
+    }
+
     if (gameState === 'clear_anim') {
         clearTimer--;
         if (clearTimer <= 0) {
@@ -380,49 +434,69 @@ function update() {
 
 function snapBullet() {
     isMoving = false;
-    let coords = getGridCoords(bulletX, bulletY);
+    let cell = findNearestAvailableCell(bulletX, bulletY);
     
-    if (coords.r >= 0 && coords.r < ROWS) {
-        let colsInRow = (coords.r % 2 === 0) ? COLS : COLS - 1;
-        coords.c = Math.max(0, Math.min(colsInRow - 1, coords.c));
-        
-        if (grid[coords.r][coords.c] !== null) {
-            let found = false;
-            let neighbors = (coords.r % 2 === 0) ? 
-                [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] :
-                [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
-            for (let n of neighbors) {
-                let nr = coords.r + n[0];
-                let nc = coords.c + n[1];
-                let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
-                if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] === null) {
-                    coords.r = nr;
-                    coords.c = nc;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                for (let c = 0; c < COLS; c++) {
-                    if (grid[0][c] === null) {
-                        coords.r = 0;
-                        coords.c = c;
-                        break;
+    if (cell.r >= 0 && cell.r < ROWS) {
+        let colsInRow = (cell.r % 2 === 0) ? COLS : COLS - 1;
+        cell.c = Math.max(0, Math.min(colsInRow - 1, cell.c));
+
+        if (grid[cell.r][cell.c] === null) {
+            if (bulletColor === SPECIAL_COLOR) {
+                let targetColor = null;
+                let neighbors = (cell.r % 2 === 0) ? 
+                    [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] :
+                    [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+                
+                for (let n of neighbors) {
+                    let nr = cell.r + n[0];
+                    let nc = cell.c + n[1];
+                    let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
+                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols) {
+                        let cItem = grid[nr][nc];
+                        if (cItem !== null && cItem !== UNBREAKABLE_COLOR) {
+                            targetColor = cItem;
+                            break;
+                        }
                     }
                 }
-            }
-        }
 
-        if (grid[coords.r][coords.c] === null) {
-            grid[coords.r][coords.c] = bulletColor;
-            
-            let matches = findConnected(coords.r, coords.c, bulletColor);
-            if (matches.length >= 3) {
-                for (let m of matches) {
-                    grid[m.r][m.c] = null;
-                    score += 10;
+                if (targetColor !== null) {
+                    let clearedCount = 0;
+                    for (let r = 0; r < ROWS; r++) {
+                        for (let c = 0; c < grid[r].length; c++) {
+                            if (grid[r][c] === targetColor) {
+                                let pos = getPixelCoords(r, c);
+                                fallingBubbles.push({
+                                    x: pos.x,
+                                    y: pos.y,
+                                    vy: 2 + Math.random() * 2,
+                                    color: targetColor
+                                });
+                                grid[r][c] = null;
+                                clearedCount++;
+                            }
+                        }
+                    }
+                    score += clearedCount * 30;
+                    removeFloating();
                 }
-                removeFloating();
+            } else {
+                grid[cell.r][cell.c] = bulletColor;
+                let matches = findConnected(cell.r, cell.c, bulletColor);
+                if (matches.length >= 3) {
+                    for (let m of matches) {
+                        let pos = getPixelCoords(m.r, m.c);
+                        fallingBubbles.push({
+                            x: pos.x,
+                            y: pos.y,
+                            vy: 2 + Math.random() * 2,
+                            color: bulletColor
+                        });
+                        grid[m.r][m.c] = null;
+                        score += 10;
+                    }
+                    removeFloating();
+                }
             }
         }
     }
@@ -479,6 +553,25 @@ function draw() {
         }
     }
 
+    // --- 落下中のバブルの描画 ---
+    for (let fb of fallingBubbles) {
+        drawBubble(fb.x, fb.y, fb.color, RADIUS);
+    }
+
+    // --- レインボー専用ボタンの描画（画面左下） ---
+    ctx.fillStyle = rainbowUsesLeft > 0 ? "#8a2be2" : "#444";
+    ctx.beginPath();
+    ctx.roundRect(15, canvas.height - 55, 130, 40, 10);
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.closePath();
+
+    ctx.fillStyle = rainbowUsesLeft > 0 ? "#fff" : "#888";
+    ctx.font = "bold 12px sans-serif";
+    ctx.fillText(`★レインボー(${rainbowUsesLeft})`, 25, canvas.height - 30);
+
     // --- 発射台の玉と引っ張り・ガイド・飛行中描画 ---
     if (isDragging) {
         let pullDist = Math.hypot(pullX, pullY);
@@ -509,10 +602,8 @@ function draw() {
 
         drawBubble(shooterX + pullX, shooterY + pullY, bulletColor, RADIUS);
     } else if (isMoving) {
-        // 飛行中の弾を描画（これが抜けていたため瞬間移動して見えていました）
         drawBubble(bulletX, bulletY, bulletColor, RADIUS);
     } else {
-        // 通常時：発射台にある待機中の玉
         drawBubble(shooterX, shooterY, bulletColor, RADIUS);
     }
 
@@ -583,11 +674,29 @@ function drawGameClearScreen() {
 function drawBubble(x, y, color, r) {
     ctx.beginPath();
     ctx.arc(x, y, r - 1, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    
+    if (color === SPECIAL_COLOR) {
+        let colorIndex = Math.floor(Date.now() / 150) % COLORS.length;
+        ctx.fillStyle = COLORS[colorIndex];
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("★", x, y);
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+    } else {
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
     ctx.closePath();
 }
 
