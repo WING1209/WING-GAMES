@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>パズルボブル風ゲーム 強化版（ステージ制・ドラッグ発射）</title>
+    <title>パズルボブル風 スマホ特化版</title>
     <style>
         body {
             margin: 0;
             padding: 0;
             background: #1a1a1a;
             color: #fff;
-            font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -23,24 +23,28 @@
         canvas {
             background: #222;
             box-shadow: 0 0 20px rgba(0,0,0,0.7);
-            max-width: 100%;
-            max-height: 100vh;
+            width: 100vw;
+            height: 100vh;
+            max-width: 450px;
+            max-height: 800px;
             display: block;
         }
         #ui-overlay {
             position: absolute;
-            top: 10px;
-            left: 10px;
-            right: 10px;
+            top: 15px;
+            left: 15px;
+            right: 15px;
             display: flex;
             justify-content: space-between;
             pointer-events: none;
+            z-index: 10;
         }
         .ui-box {
-            background: rgba(0,0,0,0.5);
-            padding: 5px 10px;
-            border-radius: 5px;
+            background: rgba(0,0,0,0.6);
+            padding: 8px 12px;
+            border-radius: 8px;
             font-size: 16px;
+            font-weight: bold;
             pointer-events: auto;
         }
     </style>
@@ -51,19 +55,19 @@
         <div class="ui-box">ステージ: <span id="stage-text">1</span>/10</div>
         <div class="ui-box">スコア: <span id="score-text">0</span></div>
     </div>
-    <canvas id="gameCanvas" width="400" height="600"></canvas>
+    <canvas id="gameCanvas" width="400" height="700"></canvas>
 
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-const ROWS = 12;
+const ROWS = 13;
 const COLS = 8;
-const RADIUS = 20;
+const RADIUS = 22;
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3);
 const COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
-const UNBREAKABLE_COLOR = '#444'; // 消えないブロック（濃いグレー）
+const UNBREAKABLE_COLOR = '#555';
 
 let grid = [];
 let score = 0;
@@ -71,7 +75,7 @@ let currentStage = 1;
 const maxStages = 10;
 
 let shooterX = canvas.width / 2;
-let shooterY = canvas.height - 50;
+let shooterY = canvas.height - 60;
 let bulletX = shooterX;
 let bulletY = shooterY;
 let bulletVX = 0;
@@ -79,14 +83,15 @@ let bulletVY = 0;
 let bulletColor = getRandomColor();
 let nextColor = getRandomColor();
 
+// スマホ操作用：画面どこでもドラッグ対応
 let isDragging = false;
 let dragStartX = 0;
 let dragStartY = 0;
 let pullX = 0;
 let pullY = 0;
-const MAX_PULL_DISTANCE = 150;
-const MIN_SPEED = 8;
-const MAX_SPEED = 25;
+const MAX_PULL_DISTANCE = 130;
+const MIN_SPEED = 7;
+const MAX_SPEED = 24;
 let isMoving = false;
 
 function getRandomColor() {
@@ -104,10 +109,7 @@ function initGridForStage(stage) {
         grid.push(row);
     }
 
-    // 消えないブロックの数：ステージ1で2個、以降倍数 (2, 4, 8, 16...)
     let unbreakableCount = Math.min(COLS * 3, 2 * Math.pow(2, stage - 1));
-
-    // ランダムな位置に消えないブロックを配置
     let placedUnbreakable = 0;
     while (placedUnbreakable < unbreakableCount) {
         let r = Math.floor(Math.random() * 4);
@@ -119,7 +121,6 @@ function initGridForStage(stage) {
         }
     }
 
-    // 通常の色のバブルを配置
     for (let r = 0; r < Math.min(ROWS, stage + 2); r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -184,40 +185,58 @@ initGridForStage(currentStage);
 spawnBullet();
 updateUIScores();
 
+// --- タッチ・マウスイベント（画面全体対応） ---
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches ? e.touches[0].clientX : e.clientX;
     let clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    return { x: clientX - rect.left, y: clientY - rect.top };
+    // キャンバスの拡大縮小を考慮した座標計算
+    let scaleX = canvas.width / rect.width;
+    let scaleY = canvas.height / rect.height;
+    return {
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY
+    };
 }
 
-canvas.addEventListener('mousedown', onPointerStart);
-canvas.addEventListener('touchstart', onPointerStart, { passive: false });
-canvas.addEventListener('mousemove', onPointerMove);
-canvas.addEventListener('touchmove', onPointerMove, { passive: false });
-canvas.addEventListener('mouseup', onPointerEnd);
-canvas.addEventListener('touchend', onPointerEnd);
-
-function onPointerStart(e) {
+window.addEventListener('mousedown', (e) => {
     if (isMoving) return;
     const pos = getTouchPos(e);
-    if (Math.hypot(pos.x - shooterX, pos.y - shooterY) < RADIUS * 3) {
-        isDragging = true;
-        dragStartX = pos.x;
-        dragStartY = pos.y;
-        pullX = 0;
-        pullY = 0;
-        e.preventDefault();
-    }
-}
+    isDragging = true;
+    dragStartX = pos.x;
+    dragStartY = pos.y;
+    pullX = 0;
+    pullY = 0;
+});
 
-function onPointerMove(e) {
+window.addEventListener('touchstart', (e) => {
+    if (isMoving) return;
+    const pos = getTouchPos(e);
+    isDragging = true;
+    dragStartX = pos.x;
+    dragStartY = pos.y;
+    pullX = 0;
+    pullY = 0;
+    e.preventDefault();
+}, { passive: false });
+
+window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    const pos = getTouchPos(e);
+    handleDragMove(pos.x, pos.y);
+});
+
+window.addEventListener('touchmove', (e) => {
     if (!isDragging) return;
     e.preventDefault();
     const pos = getTouchPos(e);
-    let dx = pos.x - dragStartX;
-    let dy = pos.y - dragStartY;
-    if (dy < 0) dy = 0;
+    handleDragMove(pos.x, pos.y);
+}, { passive: false });
+
+function handleDragMove(x, y) {
+    let dx = x - dragStartX;
+    let dy = y - dragStartY;
+    if (dy < 0) dy = 0; // 上方向への引っ張りは無効（下へ引く仕様）
 
     let dist = Math.hypot(dx, dy);
     if (dist > MAX_PULL_DISTANCE) {
@@ -229,11 +248,27 @@ function onPointerMove(e) {
     pullY = dy;
 }
 
-function onPointerEnd(e) {
+window.addEventListener('mouseup', () => {
     if (!isDragging) return;
     isDragging = false;
-    
-    let power = Math.min(1.0, Math.hypot(pullX, pullY) / MAX_PULL_DISTANCE);
+    releaseBullet();
+});
+
+window.addEventListener('touchend', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    releaseBullet();
+});
+
+function releaseBullet() {
+    let pullDist = Math.hypot(pullX, pullY);
+    if (pullDist < 10) {
+        pullX = 0;
+        pullY = 0;
+        return;
+    }
+
+    let power = Math.min(1.0, pullDist / MAX_PULL_DISTANCE);
     let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
     let angle = Math.atan2(pullY, pullX);
     
@@ -372,7 +407,6 @@ function snapBullet() {
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // グリッド描画
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -383,25 +417,27 @@ function draw() {
         }
     }
 
-    // 引っ張り中の照準ガイド・引きゴムの描画
     if (isDragging) {
         let pullAngle = Math.atan2(pullY, pullX);
-        let guideVX = Math.cos(pullAngle) * 15;
-        let guideVY = Math.sin(pullAngle) * 15;
         
         if (pullAngle > -Math.PI && pullAngle < 0) {
+            // 約4センチに相当する約150ピクセルの点線ガイド
+            let guideLength = 150;
+            let guideEndX = shooterX + Math.cos(pullAngle) * guideLength;
+            let guideEndY = shooterY + Math.sin(pullAngle) * guideLength;
+
             ctx.beginPath();
             ctx.moveTo(shooterX, shooterY);
-            ctx.lineTo(shooterX + guideVX * 10, shooterY + guideVY * 10);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([4, 4]);
+            ctx.lineTo(guideEndX, guideEndY);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([8, 6]); // ────→風の点線
             ctx.stroke();
             ctx.setLineDash([]);
             ctx.closePath();
         }
 
-        // 発射台から引っ張った位置へ伸びるゴム
+        // 引っ張りゴムの描画
         ctx.beginPath();
         ctx.moveTo(shooterX, shooterY);
         ctx.lineTo(shooterX - pullX, shooterY - pullY);
@@ -410,18 +446,15 @@ function draw() {
         ctx.stroke();
         ctx.closePath();
 
-        // 引っ張られている位置にある弾
         drawBubble(shooterX - pullX, shooterY - pullY, bulletColor);
     } else {
-        // 通常時の発射台の弾
         drawBubble(bulletX, bulletY, bulletColor);
     }
 
-    // 次の弾の表示
-    drawBubble(35, canvas.height - 35, nextColor);
+    drawBubble(40, canvas.height - 40, nextColor);
     ctx.fillStyle = "#fff";
-    ctx.font = "12px sans-serif";
-    ctx.fillText("NEXT", 20, canvas.height - 65);
+    ctx.font = "14px sans-serif";
+    ctx.fillText("NEXT", 22, canvas.height - 75);
 }
 
 function drawBubble(x, y, color) {
