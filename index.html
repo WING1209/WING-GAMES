@@ -83,7 +83,6 @@ let bulletVY = 0;
 let bulletColor = getRandomColor();
 let nextColor = getRandomColor();
 
-// スマホ操作用：画面どこでもドラッグ対応
 let isDragging = false;
 let dragStartX = 0;
 let dragStartY = 0;
@@ -185,12 +184,10 @@ initGridForStage(currentStage);
 spawnBullet();
 updateUIScores();
 
-// --- タッチ・マウスイベント（画面全体対応） ---
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches ? e.touches[0].clientX : e.clientX;
     let clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    // キャンバスの拡大縮小を考慮した座標計算
     let scaleX = canvas.width / rect.width;
     let scaleY = canvas.height / rect.height;
     return {
@@ -236,7 +233,7 @@ window.addEventListener('touchmove', (e) => {
 function handleDragMove(x, y) {
     let dx = x - dragStartX;
     let dy = y - dragStartY;
-    if (dy < 0) dy = 0; // 上方向への引っ張りは無効（下へ引く仕様）
+    if (dy < 0) dy = 0;
 
     let dist = Math.hypot(dx, dy);
     if (dist > MAX_PULL_DISTANCE) {
@@ -412,7 +409,11 @@ function draw() {
         for (let c = 0; c < colsInRow; c++) {
             if (grid[r][c] !== null) {
                 let pos = getPixelCoords(r, c);
-                drawBubble(pos.x, pos.y, grid[r][c]);
+                if (grid[r][c] === UNBREAKABLE_COLOR) {
+                    drawSquareBlock(pos.x, pos.y);
+                } else {
+                    drawBubble(pos.x, pos.y, grid[r][c]);
+                }
             }
         }
     }
@@ -421,7 +422,6 @@ function draw() {
         let pullAngle = Math.atan2(pullY, pullX);
         
         if (pullAngle > -Math.PI && pullAngle < 0) {
-            // 約4センチに相当する約150ピクセルの点線ガイド
             let guideLength = 150;
             let guideEndX = shooterX + Math.cos(pullAngle) * guideLength;
             let guideEndY = shooterY + Math.sin(pullAngle) * guideLength;
@@ -431,13 +431,12 @@ function draw() {
             ctx.lineTo(guideEndX, guideEndY);
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
             ctx.lineWidth = 3;
-            ctx.setLineDash([8, 6]); // ────→風の点線
+            ctx.setLineDash([8, 6]);
             ctx.stroke();
             ctx.setLineDash([]);
             ctx.closePath();
         }
 
-        // 引っ張りゴムの描画
         ctx.beginPath();
         ctx.moveTo(shooterX, shooterY);
         ctx.lineTo(shooterX - pullX, shooterY - pullY);
@@ -462,11 +461,22 @@ function drawBubble(x, y, color) {
     ctx.arc(x, y, RADIUS - 1, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
-    if (color !== UNBREAKABLE_COLOR) {
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-    }
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.closePath();
+}
+
+function drawSquareBlock(x, y) {
+    let size = DIAMETER - 4;
+    let half = size / 2;
+    ctx.beginPath();
+    ctx.rect(x - half, y - half, size, size);
+    ctx.fillStyle = UNBREAKABLE_COLOR;
+    ctx.fill();
+    ctx.strokeStyle = "#888";
+    ctx.lineWidth = 2;
+    ctx.stroke();
     ctx.closePath();
 }
 
