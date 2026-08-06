@@ -39,12 +39,99 @@
             height: 100%;
             object-fit: contain;
         }
+        /* オプション（設定）画面用のHTMLオーバーレイ */
+        #settings-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(17, 17, 17, 0.95);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            padding: 20px;
+            box-sizing: border-box;
+            z-index: 10;
+            overflow-y: auto;
+        }
+        #settings-overlay h2 {
+            margin-top: 10px;
+            color: #ffcc00;
+            font-size: 20px;
+        }
+        .color-setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            max-width: 350px;
+            background: #222;
+            padding: 10px 15px;
+            margin: 6px 0;
+            border-radius: 8px;
+            border: 1px solid #444;
+        }
+        .color-preview {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            background-size: cover;
+            background-position: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+        .upload-btn {
+            background: #4da6ff;
+            color: #fff;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .close-btn {
+            background: #ff4d4d;
+            color: #fff;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 16px;
+            margin-top: 15px;
+            cursor: pointer;
+        }
+        .reset-img-btn {
+            background: #555;
+            color: #ccc;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            margin-left: 5px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
 
     <div id="game-container">
         <canvas id="gameCanvas" width="400" height="750"></canvas>
+
+        <!-- 設定画面モーダル -->
+        <div id="settings-overlay">
+            <h2>玉の画像カスタマイズ</h2>
+            <p style="font-size: 11px; color: #aaa; text-align: center; margin: 5px 0 15px 0;">カメラで撮影するか、写真を選択して玉を差し替えられます</p>
+            
+            <div id="settings-list" style="width: 100%; display: flex; flex-direction: column; align-items: center;"></div>
+
+            <button class="close-btn" onclick="closeSettings()">設定を保存して戻る</button>
+        </div>
     </div>
 
 <script>
@@ -56,16 +143,29 @@ const COLS = 8;
 const RADIUS = 19;
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3);
-const COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
+
+const BASE_COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
+const COLOR_NAMES = {
+    '#ff4d4d': '赤の玉',
+    '#4da6ff': '青の玉',
+    '#4dff4d': '緑の玉',
+    '#ffff4d': '黄色の玉',
+    '#ff4dda': 'ピンクの玉',
+    'SPECIAL_BOMB': 'ボム玉(💣)'
+};
+
+// ユーザーがカスタムした画像を保持するマップ (color -> Image object)
+let customImages = {};
+
 const UNBREAKABLE_COLOR = '#fff';
-const TOP_MARGIN = 70; // 上部UIエリアの高さ
+const TOP_MARGIN = 70;
 
 let grid = [];
 let score = 0;
 let currentStage = 1;
 const maxStages = 10;
 
-let gameState = 'title'; // 'title', 'playing', 'clear_anim', 'gameclear'
+let gameState = 'title'; // 'title', 'playing', 'clear_anim', 'gameclear', 'settings'
 let clearTimer = 0;
 
 let shooterX = canvas.width / 2;
@@ -78,7 +178,6 @@ let bulletVY = 0;
 let bulletColor = getRandomColor();
 let nextColor = getRandomColor();
 
-// ボム玉の回数制限（ゲーム中計2回）
 let bombUsesLeft = 2;
 
 let isDragging = false;
@@ -97,11 +196,10 @@ let fallingBubbles = [];
 let flashingBubbles = [];
 
 function getRandomColor() {
-    // 低確率(約7%)でレインボー玉が通常発射のNEXTとしてランダム出現
     if (Math.random() < 0.07) {
         return SPECIAL_RAINBOW;
     }
-    return COLORS[Math.floor(Math.random() * COLORS.length)];
+    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
 }
 
 function initGridForStage(stage) {
@@ -162,7 +260,6 @@ function checkClearCondition() {
     for (let r = 0; r < grid.length; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
-            // 消えない玉(UNBREAKABLE_COLOR)以外の普通の玉が1つでも残っていたらクリアではない
             if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR) {
                 hasBreakable = true;
                 break;
@@ -171,7 +268,6 @@ function checkClearCondition() {
         if (hasBreakable) break;
     }
 
-    // 消せる玉がすべてなくなっていれば、消えない玉が残っていてもクリア
     if (!hasBreakable) {
         if (currentStage < maxStages) {
             gameState = 'clear_anim';
@@ -205,14 +301,20 @@ window.addEventListener('touchstart', (e) => {
 
 function handleInputStart(pos) {
     if (gameState === 'title') {
+        // STARTボタン
         if (pos.x >= canvas.width / 2 - 90 && pos.x <= canvas.width / 2 + 90 &&
-            pos.y >= canvas.height / 2 + 40 && pos.y <= canvas.height / 2 + 110) {
+            pos.y >= canvas.height / 2 + 30 && pos.y <= canvas.height / 2 + 90) {
             gameState = 'playing';
             score = 0;
             currentStage = 1;
             bombUsesLeft = 2;
             initGridForStage(currentStage);
             spawnBullet();
+        }
+        // 設定ボタン（タイトル画面）
+        else if (pos.x >= canvas.width / 2 - 90 && pos.x <= canvas.width / 2 + 90 &&
+                   pos.y >= canvas.height / 2 + 105 && pos.y <= canvas.height / 2 + 155) {
+            openSettings();
         }
         return;
     }
@@ -223,7 +325,14 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
-        if (pos.x >= 220 && pos.x <= 388 && pos.y >= 20 && pos.y <= 58) {
+        // 設定ボタン（ゲーム画面右上: x: 330〜390, y: 20〜58）
+        if (pos.x >= 325 && pos.x <= 390 && pos.y >= 20 && pos.y <= 58) {
+            openSettings();
+            return;
+        }
+
+        // ボム玉スキルボタン（x: 180〜315, y: 20〜58）
+        if (pos.x >= 180 && pos.x <= 315 && pos.y >= 20 && pos.y <= 58) {
             if (bombUsesLeft > 0) {
                 bulletColor = SPECIAL_BOMB;
                 bombUsesLeft--;
@@ -605,19 +714,20 @@ function draw() {
     ctx.stroke();
 
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 13px sans-serif";
-    ctx.fillText(`ステージ: ${currentStage}/10`, 10, 27);
-    ctx.fillText(`スコア: ${score}`, 10, 48);
+    ctx.font = "bold 12px sans-serif";
+    ctx.fillText(`ステージ:${currentStage}/10`, 8, 26);
+    ctx.fillText(`スコア:${score}`, 8, 48);
 
     ctx.fillStyle = "#aaa";
     ctx.font = "10px sans-serif";
-    ctx.fillText("NEXT", 155, 20);
-    drawBubble(170, 38, nextColor, 14);
+    ctx.fillText("NEXT", 132, 20);
+    drawBubble(145, 38, nextColor, 14);
 
+    // ボム玉スキルボタン
     let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
     ctx.fillStyle = btnBg;
     ctx.beginPath();
-    ctx.roundRect(220, 20, 168, 38, 8);
+    ctx.roundRect(175, 20, 135, 38, 8);
     ctx.fill();
     ctx.strokeStyle = bombUsesLeft > 0 ? "#fff" : "#555";
     ctx.lineWidth = 1.5;
@@ -625,8 +735,22 @@ function draw() {
     ctx.closePath();
 
     ctx.fillStyle = bombUsesLeft > 0 ? "#fff" : "#777";
-    ctx.font = "bold 12px sans-serif";
-    ctx.fillText(`💣ボム(${bombUsesLeft})`, 245, 43);
+    ctx.font = "bold 11px sans-serif";
+    ctx.fillText(`💣ボム(${bombUsesLeft})`, 190, 43);
+
+    // 設定ボタン
+    ctx.fillStyle = "#444";
+    ctx.beginPath();
+    ctx.roundRect(318, 20, 72, 38, 8);
+    ctx.fill();
+    ctx.strokeStyle = "#888";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.closePath();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 11px sans-serif";
+    ctx.fillText("⚙️ 設定", 333, 43);
 
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
@@ -717,26 +841,41 @@ function draw() {
 function drawTitleScreen() {
     ctx.fillStyle = "#aaa";
     ctx.font = "bold 14px sans-serif";
-    ctx.fillText("Ver.1.11", 15, 25);
+    ctx.fillText("Ver.1.12", 15, 25);
 
     ctx.fillStyle = "#ff4da6";
     ctx.font = "bold 30px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("パズルボブル風", canvas.width / 2, canvas.height / 2 - 80);
+    ctx.fillText("パズルボブル風", canvas.width / 2, canvas.height / 2 - 90);
     
     ctx.fillStyle = "#4da6ff";
     ctx.font = "bold 18px sans-serif";
-    ctx.fillText("スマホ特化版", canvas.width / 2, canvas.height / 2 - 45);
+    ctx.fillText("スマホ特化版", canvas.width / 2, canvas.height / 2 - 55);
 
+    // STARTボタン
     ctx.fillStyle = "#ffcc00";
     ctx.beginPath();
-    ctx.roundRect(canvas.width / 2 - 90, canvas.height / 2 + 40, 180, 55, 12);
+    ctx.roundRect(canvas.width / 2 - 90, canvas.height / 2 + 30, 180, 50, 10);
     ctx.fill();
     ctx.closePath();
 
     ctx.fillStyle = "#111";
-    ctx.font = "bold 20px sans-serif";
-    ctx.fillText("START", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.font = "bold 18px sans-serif";
+    ctx.fillText("START", canvas.width / 2, canvas.height / 2 + 61);
+
+    // 設定ボタン
+    ctx.fillStyle = "#444";
+    ctx.beginPath();
+    ctx.roundRect(canvas.width / 2 - 90, canvas.height / 2 + 95, 180, 45, 10);
+    ctx.fill();
+    ctx.strokeStyle = "#888";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.closePath();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillText("⚙️ 玉画像の設定", canvas.width / 2, canvas.height / 2 + 123);
 
     ctx.textAlign = "left";
 }
@@ -762,12 +901,31 @@ function drawGameClearScreen() {
 }
 
 function drawBubble(x, y, color, r) {
+    // ユーザーがカスタム画像をアップロードしている場合
+    if (customImages[color]) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, r - 1, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(customImages[color], x - r, y - r, r * 2, r * 2);
+        ctx.restore();
+
+        // 枠線
+        ctx.beginPath();
+        ctx.arc(x, y, r - 1, 0, Math.PI * 2);
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.closePath();
+        return;
+    }
+
     ctx.beginPath();
     ctx.arc(x, y, r - 1, 0, Math.PI * 2);
     
     if (color === SPECIAL_RAINBOW) {
-        let colorIndex = Math.floor(Date.now() / 150) % COLORS.length;
-        ctx.fillStyle = COLORS[colorIndex];
+        let colorIndex = Math.floor(Date.now() / 150) % BASE_COLORS.length;
+        ctx.fillStyle = BASE_COLORS[colorIndex];
         ctx.fill();
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 3;
@@ -824,6 +982,90 @@ function drawUnbreakableBubble(x, y, r) {
     ctx.lineWidth = 2.5;
     ctx.stroke();
     ctx.closePath();
+}
+
+// --- 設定画面の制御用関数 ---
+function openSettings() {
+    gameState = 'settings';
+    let listContainer = document.getElementById('settings-list');
+    listContainer.innerHTML = '';
+
+    let targets = [...BASE_COLORS, SPECIAL_BOMB];
+
+    targets.forEach(col => {
+        let rowDiv = document.createElement('div');
+        rowDiv.className = 'color-setting-row';
+
+        let nameSpan = document.createElement('span');
+        nameSpan.style.fontSize = '13px';
+        nameSpan.style.fontWeight = 'bold';
+        nameSpan.innerText = COLOR_NAMES[col] || col;
+
+        let rightWrapper = document.createElement('div');
+        rightWrapper.style.display = 'flex';
+        rightWrapper.style.alignItems = 'center';
+        rightWrapper.style.gap = '8px';
+
+        let previewDiv = document.createElement('div');
+        previewDiv.className = 'color-preview';
+        if (customImages[col]) {
+            previewDiv.style.backgroundImage = `url(${customImages[col].src})`;
+        } else {
+            previewDiv.style.backgroundColor = col === SPECIAL_BOMB ? '#333' : col;
+            if (col === SPECIAL_BOMB) previewDiv.innerText = '💣';
+        }
+
+        let fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.style.display = 'none';
+        fileInput.onchange = (e) => {
+            let file = e.target.files[0];
+            if (file) {
+                let reader = new FileReader();
+                reader.onload = (event) => {
+                    let img = new Image();
+                    img.onload = () => {
+                        customImages[col] = img;
+                        openSettings(); // リストを再描画してプレビュー更新
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+
+        let uploadBtn = document.createElement('button');
+        uploadBtn.className = 'upload-btn';
+        uploadBtn.innerText = '📷 変更';
+        uploadBtn.onclick = () => fileInput.click();
+
+        rightWrapper.appendChild(previewDiv);
+        rightWrapper.appendChild(uploadBtn);
+
+        if (customImages[col]) {
+            let resetBtn = document.createElement('button');
+            resetBtn.className = 'reset-img-btn';
+            resetBtn.innerText = '初期に戻す';
+            resetBtn.onclick = () => {
+                delete customImages[col];
+                openSettings();
+            };
+            rightWrapper.appendChild(resetBtn);
+        }
+
+        rowDiv.appendChild(nameSpan);
+        rowDiv.appendChild(rightWrapper);
+        rowDiv.appendChild(fileInput);
+        listContainer.appendChild(rowDiv);
+    });
+
+    document.getElementById('settings-overlay').style.display = 'flex';
+}
+
+function closeSettings() {
+    document.getElementById('settings-overlay').style.display = 'none';
+    gameState = 'title';
 }
 
 function loop() {
