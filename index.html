@@ -64,7 +64,7 @@
         }
         .overlay-screen h2 {
             color: #ffcc00;
-            font-size: 28px;
+            font-size: 26px;
             margin-bottom: 20px;
         }
         .menu-btn {
@@ -130,44 +130,50 @@
     <div id="game-container">
         <canvas id="gameCanvas" width="400" height="750"></canvas>
 
-        <!-- ① モード選択画面 -->
+        <!-- ① モード選択画面 (タイトル) -->
         <div id="screen-mode" class="overlay-screen">
             <h2>パズルボブル風</h2>
             <button class="menu-btn" onclick="startSinglePlay()">ひとりで遊ぶ</button>
-            <button class="menu-btn sub" onclick="showScreen('screen-battle-menu')">フレンドバトル</button>
+            <button class="menu-btn sub" onclick="showScreen('screen-battle-select')">フレンドバトル</button>
             <button class="menu-btn gray" onclick="openSettings()">⚙️ 玉画像設定</button>
         </div>
 
-        <!-- ② バトル形態選択画面 -->
-        <div id="screen-battle-menu" class="overlay-screen">
-            <h2>バトルモード選択</h2>
-            <button class="menu-btn" onclick="setupBattle('timeattack', 'host')">タイムアタック (ホスト)</button>
-            <button class="menu-btn sub" onclick="setupBattle('timeattack', 'guest')">タイムアタック (ゲスト)</button>
-            <button class="menu-btn" onclick="setupBattle('rally', 'host')">ラリー対戦 (ホスト)</button>
-            <button class="menu-btn sub" onclick="setupBattle('rally', 'guest')">ラリー対戦 (ゲスト)</button>
+        <!-- ② フレンドバトル モード選択画面（タイムアタック / ラリー対戦） -->
+        <div id="screen-battle-select" class="overlay-screen">
+            <h2>対戦モード選択</h2>
+            <button class="menu-btn" onclick="selectBattleType('タイムアタック')">⏱️ タイムアタック</button>
+            <button class="menu-btn sub" onclick="selectBattleType('ラリー対戦')">⚔️ ラリー対戦</button>
             <button class="menu-btn gray" onclick="showScreen('screen-mode')">もどる</button>
         </div>
 
-        <!-- ③ ゲスト用 合言葉入力画面 -->
+        <!-- ③ ホスト / ゲスト 役割選択画面 -->
+        <div id="screen-role-select" class="overlay-screen">
+            <h2 id="role-select-title">対戦設定</h2>
+            <button class="menu-btn" onclick="setupRole('host')">👑 ホスト（部屋を作る）</button>
+            <button class="menu-btn sub" onclick="setupRole('guest')">🎮 ゲスト（部屋に入る）</button>
+            <button class="menu-btn gray" onclick="showScreen('screen-battle-select')">もどる</button>
+        </div>
+
+        <!-- ④ ゲスト用 合言葉入力画面 -->
         <div id="screen-guest-join" class="overlay-screen">
             <h2>合言葉を入力</h2>
             <p style="font-size: 14px; color: #ccc;">ホストから教わった4桁の数字を入力</p>
             <input type="number" id="input-room-code" class="room-code-input" maxlength="4" placeholder="0000">
             <br>
-            <button class="menu-btn" onclick="joinRoom()">入室する</button>
-            <button class="menu-btn gray" onclick="showScreen('screen-battle-menu')">もどる</button>
+            <button class="menu-btn" onclick="joinRoom()">接続して対戦開始！</button>
+            <button class="menu-btn gray" onclick="showScreen('screen-role-select')">もどる</button>
         </div>
 
-        <!-- ④ ホスト用 待機・合言葉表示画面 -->
+        <!-- ⑤ ホスト用 待機・合言葉表示画面 -->
         <div id="screen-host-wait" class="overlay-screen">
-            <h2>ルーム作成完了</h2>
+            <h2>対戦相手の接続待ち</h2>
             <p style="font-size: 14px; color: #ccc;">以下の4桁を相手に伝えてください</p>
             <div id="display-room-code" style="font-size: 52px; color: #ffcc00; letter-spacing: 10px; margin: 20px 0; font-weight: bold;">----</div>
-            <p style="font-size: 13px; color: #888;">相手が入室するとバトルが始まります...</p>
-            <button class="menu-btn gray" onclick="showScreen('screen-battle-menu')">キャンセル</button>
+            <p style="font-size: 13px; color: #888;">相手が接続すると自動でスタートします...</p>
+            <button class="menu-btn gray" onclick="showScreen('screen-role-select')">キャンセル</button>
         </div>
 
-        <!-- ⑤ ステージクリア画面 -->
+        <!-- ⑥ ステージクリア画面 -->
         <div id="screen-stage-clear" class="overlay-screen">
             <h2>STAGE CLEAR!</h2>
             <p id="clear-score-text" style="font-size: 18px; margin-bottom: 20px; color: #fff;"></p>
@@ -175,7 +181,7 @@
             <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ戻る</button>
         </div>
 
-        <!-- ⑥ ゲームオーバー画面 -->
+        <!-- ⑦ ゲームオーバー画面 -->
         <div id="screen-game-over" class="overlay-screen">
             <h2 style="color: #ff4d4d;">GAME OVER</h2>
             <p id="gameover-score-text" style="font-size: 18px; margin-bottom: 20px; color: #fff;"></p>
@@ -221,8 +227,8 @@ let currentStage = 1;
 const maxStages = 10;
 
 let gameMode = 'single';
-let battleType = null;
-let battleRole = null;
+let battleType = ''; // 'タイムアタック' または 'ラリー対戦'
+let battleRole = ''; // 'host' または 'guest'
 let roomCode = '';
 let gameState = 'title';
 
@@ -312,29 +318,40 @@ function startSinglePlay() {
     gameState = 'playing';
     score = 0;
     currentStage = 1;
-    bombUsesLeft = 2; // ボム回数リセット
+    bombUsesLeft = 2;
     initGridForStage(currentStage);
     spawnBullet();
     showScreen('');
 }
 
-function setupBattle(type, role) {
+// 1. 対戦タイプを選択 (タイムアタック / ラリー対戦)
+function selectBattleType(type) {
     battleType = type;
+    document.getElementById('role-select-title').innerText = `${battleType} 設定`;
+    showScreen('screen-role-select');
+}
+
+// 2. 役割を選択 (ホスト / ゲスト)
+function setupRole(role) {
     battleRole = role;
     if (role === 'host') {
         roomCode = Math.floor(1000 + Math.random() * 9000).toString();
         document.getElementById('display-room-code').innerText = roomCode;
         gameState = 'host_wait';
         showScreen('screen-host-wait');
+        
+        // デモ用: 3秒後に接続が来た想定で自動開始
         setTimeout(() => {
             if (gameState === 'host_wait') startBattleGame();
         }, 3000);
     } else {
         gameState = 'guest_join';
+        document.getElementById('input-room-code').value = '';
         showScreen('screen-guest-join');
     }
 }
 
+// 3. ゲスト側の入室処理
 function joinRoom() {
     let code = document.getElementById('input-room-code').value;
     if (code.length === 4) {
@@ -345,12 +362,13 @@ function joinRoom() {
     }
 }
 
+// 4. バトル開始処理
 function startBattleGame() {
     gameMode = 'battle';
     gameState = 'playing';
     score = 0;
     currentStage = 1;
-    bombUsesLeft = 2; // ボム回数リセット
+    bombUsesLeft = 2;
     initGridForStage(currentStage);
     spawnBullet();
     showScreen('');
@@ -359,7 +377,7 @@ function startBattleGame() {
 function nextStageAction() {
     if (currentStage < maxStages) {
         currentStage++;
-        bombUsesLeft = 2; // 次のステージ進出時にボム回数を2にリセット！
+        bombUsesLeft = 2;
         initGridForStage(currentStage);
         spawnBullet();
         gameState = 'playing';
@@ -371,7 +389,7 @@ function nextStageAction() {
 }
 
 function retryStage() {
-    bombUsesLeft = 2; // リトライ時にボム回数を2にリセット！
+    bombUsesLeft = 2;
     initGridForStage(currentStage);
     spawnBullet();
     gameState = 'playing';
@@ -472,7 +490,7 @@ window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
 function handleInputStart(pos) {
     if (gameState === 'title') return;
 
-    if (gameState === 'gameclear') {
+    if (gameState === 'gameclear' || gameState === 'battle_result') {
         returnToTitle();
         return;
     }
@@ -519,7 +537,7 @@ function handleDragMove(pos) {
     pullY = dy;
 }
 
-window.addEventListener('touchend', (e) => {
+window.addEventListener('touchend', () => {
     if (isDragging) {
         isDragging = false;
         releaseBullet();
@@ -838,7 +856,7 @@ function draw() {
 function drawTitleBackground() {
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("スマホ特化 Ver.1.32", 15, 30);
+    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("スマホ特化 Ver.1.33", 15, 30);
 }
 
 function drawGameClearScreen() {
@@ -853,8 +871,9 @@ function drawGameClearScreen() {
 function drawBattleResultScreen() {
     ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#ffcc00"; ctx.font = "bold 32px sans-serif"; ctx.textAlign = "center";
-    ctx.fillText(`${battleWinner} WIN!`, canvas.width / 2, canvas.height / 2 - 80);
-    document.getElementById('ticker-container').style.display = 'none';
+    ctx.fillText(`${battleWinner} WIN!`, canvas.width / 2, canvas.height / 2 - 40);
+    ctx.fillStyle = "#4da6ff"; ctx.font = "14px sans-serif"; ctx.fillText("画面をタップしてタイトルへ", canvas.width / 2, canvas.height / 2 + 20);
+    ctx.textAlign = "left";
 }
 
 function drawBubble(x, y, color, r) {
