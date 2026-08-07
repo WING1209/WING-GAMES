@@ -148,7 +148,7 @@
     <!-- モード選択画面 -->
     <div id="screen-mode" class="overlay-screen">
         <h1>パズルボブル</h1>
-        <button class="menu-btn" onclick="startSinglePlay()">👤 ひとりであそぶ</button>
+        <button class="menu-btn" onclick="startSinglePlay()">👤 ひとりであそぶ (300秒)</button>
         <button class="menu-btn sub" onclick="showScreen('screen-role-select')">⚔️ オンライン対戦</button>
         <button class="menu-btn gray" onclick="showRankingBoard()">🏆 ランキングを見る</button>
     </div>
@@ -221,9 +221,9 @@
 
     <!-- ゲームオーバー画面 -->
     <div id="screen-game-over" class="overlay-screen" style="display:none;">
-        <h2 style="color:#ff4d4d;">GAME OVER</h2>
+        <h2 id="gameover-title-text" style="color:#ff4d4d;">GAME OVER</h2>
         <p id="gameover-score-text">スコア: 0</p>
-        <button class="menu-btn" onclick="retryStage()">もう一度挑戦</button>
+        <button id="btn-gameover-action" class="menu-btn" onclick="handleGameOverNextAction()">次へ</button>
         <button class="menu-btn gray" onclick="returnToTitle()">タイトルに戻る</button>
     </div>
 
@@ -243,7 +243,7 @@
                 <tr>
                     <th>順位</th>
                     <th>名前</th>
-                    <th>タイム</th>
+                    <th>クリア数</th>
                     <th>スコア</th>
                 </tr>
             </thead>
