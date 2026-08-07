@@ -117,8 +117,10 @@ let flashingBubbles = [];
 let particles = [];
 let battleWinner = '';
 
-let singleGameStartTime = 0;
-let totalClearTime = 0;
+// ⏱️ 時間制限パラメータ（一人プレイ 300秒固定）
+const SINGLE_GAME_TIME_LIMIT = 300;
+let singleTimeRemaining = SINGLE_GAME_TIME_LIMIT;
+let lastTimerUpdate = 0;
 
 let peer = null;
 let conn = null;
@@ -195,7 +197,8 @@ function startSinglePlay() {
     score = 0;
     currentStage = 1;
     bombUsesLeft = 2;
-    singleGameStartTime = Date.now();
+    singleTimeRemaining = SINGLE_GAME_TIME_LIMIT;
+    lastTimerUpdate = Date.now();
     initGridForStage(currentStage);
     spawnBullet();
     playRandomBGM();
@@ -401,8 +404,27 @@ function nextStageAction() {
     }
 }
 
+function triggerGameOverScreen(reasonText = "GAME OVER") {
+    playSE(se.gameOver);
+    stopBGM();
+    gameState = 'gameover_menu';
+    document.getElementById('gameover-title-text').innerText = reasonText;
+    document.getElementById('gameover-score-text').innerText = `到達ステージ: ${currentStage} / スコア: ${score}`;
+    showScreen('screen-game-over');
+}
+
+function handleGameOverNextAction() {
+    if (gameMode === 'single' && checkRankIn()) {
+        promptNameInput();
+    } else {
+        retryStage();
+    }
+}
+
 function retryStage() {
     bombUsesLeft = 2;
+    singleTimeRemaining = SINGLE_GAME_TIME_LIMIT;
+    lastTimerUpdate = Date.now();
     initGridForStage(currentStage);
     spawnBullet();
     gameState = 'playing';
@@ -438,7 +460,7 @@ function checkClearCondition() {
     if (fallingBubbles.length > 0 || flashingBubbles.length > 0) return;
 
     let hasBreakable = false;
-    for (let r = 0; r < grid.length; r++) {
+    for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
             if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR) {
@@ -460,7 +482,6 @@ function checkClearCondition() {
                 document.getElementById('clear-score-text').innerText = `ステージ ${currentStage} クリア！ スコア: ${score}`;
                 showScreen('screen-stage-clear');
             } else {
-                totalClearTime = Math.floor((Date.now() - singleGameStartTime) / 1000);
                 initParticles();
                 gameState = 'gameclear';
                 showScreen('');
@@ -475,16 +496,14 @@ function checkGameOverCondition() {
         let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
         for (let cc = 0; cc < rowCols; cc++) {
             if (grid[r][cc] !== null) {
-                playSE(se.gameOver);
-                stopBGM();
                 if (gameMode === 'battle') {
+                    playSE(se.gameOver);
+                    stopBGM();
                     opponentWins++;
                     if (conn && conn.open) conn.send({ type: 'round_loss' });
                     checkBattleSetEnd('OPPONENT');
                 } else {
-                    gameState = 'gameover_menu';
-                    document.getElementById('gameover-score-text').innerText = `ステージ ${currentStage} で終了 スコア: ${score}`;
-                    showScreen('screen-game-over');
+                    triggerGameOverScreen("GAME OVER");
                 }
                 return;
             }
@@ -558,10 +577,10 @@ function getRankings() {
     } catch(e) { return []; }
 }
 
-function saveRanking(name, timeSec, scoreVal) {
+function saveRanking(name, stageCount, scoreVal) {
     let list = getRankings();
-    list.push({ name: name || 'NO NAME', time: timeSec, score: scoreVal });
-    list.sort((a, b) => b.score - a.score || a.time - b.time);
+    list.push({ name: name || 'NO NAME', stage: stageCount, score: scoreVal });
+    list.sort((a, b) => b.score - a.score || b.stage - a.stage);
     list = list.slice(0, 5);
     try {
         localStorage.setItem('pb_rankings', JSON.stringify(list));
@@ -577,7 +596,7 @@ function checkRankIn() {
 
 function promptNameInput() {
     if (checkRankIn()) {
-        document.getElementById('rankin-desc-text').innerText = `タイム: ${totalClearTime}秒 / スコア: ${score}`;
+        document.getElementById('rankin-desc-text').innerText = `クリアステージ数: ${currentStage - 1} / スコア: ${score}`;
         showScreen('screen-name-input');
     } else {
         showRankingBoard();
@@ -586,7 +605,7 @@ function promptNameInput() {
 
 function submitScoreAndShowRanking() {
     let name = document.getElementById('player-name-input').value.trim();
-    saveRanking(name, totalClearTime, score);
+    saveRanking(name, currentStage - 1, score);
     showRankingBoard();
 }
 
@@ -603,7 +622,7 @@ function showRankingBoard() {
             tr.innerHTML = `
                 <td style="font-weight:bold; color:#ffcc00;">${idx + 1}位</td>
                 <td>${item.name}</td>
-                <td>${item.time}秒</td>
+                <td>${item.stage || 0} 面</td>
                 <td>${item.score}pt</td>
             `;
             tbody.appendChild(tr);
@@ -708,9 +727,14 @@ function getPixelCoords(r, c) {
     return { x, y };
 }
 
+// 🎯 壁バウンド後でも一番上の壁に正しく固定するためのロジック改善
 function findCellForPosition(x, y) {
     let bestR = 0, bestC = 0, minDist = Infinity;
-    for (let r = 0; r < ROWS; r++) {
+    
+    // 天井（上端）に当たった場合は優先的に行0 (ROW 0) を検索対象にする
+    let startRow = (y <= TOP_MARGIN + RADIUS + 5) ? 0 : 0;
+    
+    for (let r = startRow; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
             let pos = getPixelCoords(r, c);
@@ -718,6 +742,7 @@ function findCellForPosition(x, y) {
             if (dist < minDist) { minDist = dist; bestR = r; bestC = c; }
         }
     }
+    
     if (grid[bestR][bestC] !== null) {
         let altMinDist = Infinity, altR = bestR, altC = bestC;
         for (let r = 0; r < ROWS; r++) {
@@ -794,6 +819,20 @@ function update() {
         return;
     }
 
+    // ⏱️ ひとりであそぶモードのカウントダウン管理
+    if (gameState === 'playing' && gameMode === 'single') {
+        let now = Date.now();
+        if (now - lastTimerUpdate >= 1000) {
+            singleTimeRemaining--;
+            lastTimerUpdate = now;
+            if (singleTimeRemaining <= 0) {
+                singleTimeRemaining = 0;
+                triggerGameOverScreen("TIME UP!");
+                return;
+            }
+        }
+    }
+
     for (let i = fallingBubbles.length - 1; i >= 0; i--) {
         let fb = fallingBubbles[i];
         fb.y += fb.vy; fb.vy += 0.6;
@@ -817,11 +856,18 @@ function update() {
         bulletX += bulletVX;
         bulletY += bulletVY;
 
-        if (bulletX - RADIUS < 0) { bulletX = RADIUS; bulletVX *= -1; }
-        else if (bulletX + RADIUS > canvas.width) { bulletX = canvas.width - RADIUS; bulletVX *= -1; }
+        // 左右の壁反射
+        if (bulletX - RADIUS < 0) { 
+            bulletX = RADIUS; 
+            bulletVX *= -1; 
+        } else if (bulletX + RADIUS > canvas.width) { 
+            bulletX = canvas.width - RADIUS; 
+            bulletVX *= -1; 
+        }
 
+        // 🛠️ 天井（一番上の壁）当たり判定の完全補正
         if (bulletY - RADIUS <= TOP_MARGIN) {
-            bulletY = TOP_MARGIN + RADIUS;
+            bulletY = TOP_MARGIN + RADIUS; // 上限を強制固定
             snapBullet();
             return;
         }
@@ -938,9 +984,13 @@ function draw() {
         let roleName = battleRole === 'host' ? '1P(ホスト)' : '2P(ゲスト)';
         ctx.fillText(`[${roleName}] 勝敗: ${myWins} - ${opponentWins}`, 12, 28);
     } else {
-        ctx.fillText(`STAGE ${currentStage}/10`, 12, 28);
+        ctx.fillText(`STAGE ${currentStage}/10`, 12, 22);
+        let timeColor = singleTimeRemaining <= 30 ? "#ff4d4d" : "#ffcc00";
+        ctx.fillStyle = timeColor;
+        ctx.fillText(`TIME: ${singleTimeRemaining}s`, 12, 40);
+        ctx.fillStyle = "#fff";
     }
-    ctx.fillText(`SCORE: ${score}`, 12, 52);
+    ctx.fillText(`SCORE: ${score}`, 12, 58);
 
     ctx.fillStyle = "#aaa";
     ctx.font = "bold 10px sans-serif";
@@ -1034,7 +1084,7 @@ function drawGameClearScreen() {
     ctx.font = "bold 20px sans-serif";
     ctx.fillStyle = "#ffffff";
     ctx.fillText(`ALL CLEAR!`, canvas.width / 2, canvas.height / 2 + 10);
-    ctx.fillText(`TIME: ${totalClearTime}s / SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 45);
+    ctx.fillText(`SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 45);
 
     ctx.font = "14px sans-serif";
     ctx.fillStyle = "#4da6ff";
