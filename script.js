@@ -100,13 +100,15 @@ let bulletColor = getRandomShooterColor();
 let nextColor = getRandomShooterColor();
 let bombUsesLeft = 2;
 
+// 📱 スマホ操作用チューニングパラメータ
 let isDragging = false;
 let dragStartX = 0;
 let dragStartY = 0;
 let pullX = 0;
 let pullY = 0;
-const MAX_PULL_DISTANCE = 120;
-const MIN_SPEED = 8;
+const MAX_PULL_DISTANCE = 110;
+const MIN_PULL_CANCEL = 25; // 最低これだけ引っ張らないとキャンセルされる（誤射防止）
+const MIN_SPEED = 10;
 const MAX_SPEED = 24;
 let isMoving = false;
 
@@ -144,7 +146,6 @@ function getRandomShooterColor() {
     return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
 }
 
-// 🛠️ 盤面生成（落ちる原因を無くすよう安全に修正）
 function initGridForStage(stage) {
     grid = [];
     fallingBubbles = [];
@@ -157,8 +158,7 @@ function initGridForStage(stage) {
         grid.push(row);
     }
 
-    // 壊せないブロックを上部3段内に安全に設置
-    let maxUnbreakable = Math.min(6, stage);
+    let maxUnbreakable = Math.min(5, stage);
     let placed = 0;
     let attempts = 0;
     while (placed < maxUnbreakable && attempts < 100) {
@@ -172,19 +172,17 @@ function initGridForStage(stage) {
         }
     }
 
-    // 通常ブロックの配置
-    let fillRows = Math.min(ROWS - 4, 2 + Math.floor(stage * 0.6));
-    for (let r = 0; r < fillRows; r++) {
+    let maxAllowedRows = Math.min(6, 2 + Math.floor(stage * 0.4));
+    for (let r = 0; r < maxAllowedRows; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] === null && Math.random() < 0.7) {
+            if (grid[r][c] === null && Math.random() < 0.75) {
                 grid[r][c] = getRandomGridColor();
             }
         }
     }
 }
 
-// --- ソロモード開始 ---
 function startSinglePlay() {
     closeNetwork();
     gameMode = 'single';
@@ -199,7 +197,6 @@ function startSinglePlay() {
     showScreen('');
 }
 
-// 🌐 PeerJS 接続処理（ホストがマッチ後にルール設定）
 function setupRole(role) {
     battleRole = role;
     closeNetwork();
@@ -213,13 +210,12 @@ function setupRole(role) {
         peer.on('connection', (c) => {
             conn = c;
             setupConnectionListeners();
-            // 相手が接続したら、ホスト専用ルール設定画面を表示！
-            setTimeout(() => {
+            conn.on('open', () => {
                 showScreen('screen-host-rule-setup');
-            }, 300);
+            });
         });
-        peer.on('error', () => {
-            alert('接続エラーが発生しました');
+        peer.on('error', (err) => {
+            alert('接続エラーが発生しました。もう一度試してください。');
             showScreen('screen-role-select');
         });
     } else {
@@ -279,7 +275,6 @@ function setupConnectionListeners() {
     });
 }
 
-// 👑 ホスト用ルール選択UI操作
 function setHostBattleType(type) {
     battleType = type;
     document.getElementById('btn-mode-ta').className = type === 'タイムアタック' ? 'menu-btn sub' : 'menu-btn gray';
@@ -299,8 +294,10 @@ function confirmHostBattleStart() {
             targetWins: targetWins,
             battleType: battleType
         });
+        startBattleGame();
+    } else {
+        alert('ゲストとの通信が確立されていません');
     }
-    startBattleGame();
 }
 
 function closeNetwork() {
@@ -569,6 +566,7 @@ function showRankingBoard() {
     showScreen('screen-ranking');
 }
 
+// 📱 スマホ特化：タッチ座標の高精度計算
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
@@ -578,8 +576,9 @@ function getTouchPos(e) {
     return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
 }
 
+// 📱 スマホ特化：画面スクロール防止・ダブルタップズーム防止処理
 window.addEventListener('touchstart', (e) => {
-    if (gameState === 'playing') e.preventDefault();
+    if (e.target === canvas) e.preventDefault();
     handleInputStart(getTouchPos(e));
 }, { passive: false });
 
@@ -588,27 +587,28 @@ window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
 function handleInputStart(pos) {
     if (gameState === 'title') return;
 
-    if (gameState === 'gameclear') {
-        promptNameInput();
-        return;
-    }
-    if (gameState === 'battle_result') {
-        returnToTitle();
-        return;
-    }
+    if (gameState === 'gameclear') { promptNameInput(); return; }
+    if (gameState === 'battle_result') { returnToTitle(); return; }
 
     if (gameState === 'playing' && !isMoving) {
+        // 設定ボタンタップ判定
         if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
             openSettings(); return;
         }
+        // ボムボタンタップ判定
         if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
             if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
             return;
         }
 
-        isDragging = true;
-        dragStartX = pos.x; dragStartY = pos.y;
-        pullX = 0; pullY = 0;
+        // スマホ特化：画面の下半分のどこかを触った時だけドラッグを開始（上部エリアの誤誤爆防止）
+        if (pos.y > TOP_MARGIN + 100) {
+            isDragging = true;
+            dragStartX = pos.x;
+            dragStartY = pos.y;
+            pullX = 0;
+            pullY = 0;
+        }
     }
 }
 
@@ -624,32 +624,48 @@ function handleDragMove(pos) {
     let dx = pos.x - dragStartX;
     let dy = pos.y - dragStartY;
     let dist = Math.hypot(dx, dy);
+    
     if (dist > MAX_PULL_DISTANCE) {
         let angle = Math.atan2(dy, dx);
         dx = Math.cos(angle) * MAX_PULL_DISTANCE;
         dy = Math.sin(angle) * MAX_PULL_DISTANCE;
     }
-    pullX = dx; pullY = dy;
+    pullX = dx; 
+    pullY = dy;
 }
 
-window.addEventListener('touchend', () => { if (isDragging) { isDragging = false; releaseBullet(); } });
+window.addEventListener('touchend', (e) => { if (isDragging) { isDragging = false; releaseBullet(); } });
 window.addEventListener('mouseup', () => { if (isDragging) { isDragging = false; releaseBullet(); } });
 
 function releaseBullet() {
     let pullDist = Math.hypot(pullX, pullY);
-    if (pullDist < 12) { pullX = 0; pullY = 0; return; }
-
-    let power = Math.min(1.0, pullDist / MAX_PULL_DISTANCE);
-    let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
-    let launchAngle = Math.atan2(-pullY, -pullX);
     
-    if (launchAngle < -0.05 && launchAngle > -Math.PI + 0.05) {
-        bulletVX = Math.cos(launchAngle) * speed;
-        bulletVY = Math.sin(launchAngle) * speed;
-        isMoving = true;
-        playSE(se.ballShoot);
+    // 📱 スマホ特化：引き代が少なすぎる場合は「操作キャンセル」とみなして発射しない
+    if (pullDist < MIN_PULL_CANCEL) {
+        pullX = 0; 
+        pullY = 0; 
+        return; 
     }
-    pullX = 0; pullY = 0;
+
+    // 📱 引っ張る方向が「下向き（手前）」のときだけ発射（上へ引っ張った場合はキャンセル）
+    if (pullY > 5) {
+        let power = Math.min(1.0, pullDist / MAX_PULL_DISTANCE);
+        let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
+        
+        // 引っ張った方向の「真反対」へ飛ばす
+        let launchAngle = Math.atan2(-pullY, -pullX);
+        
+        // 角度チェック（極端な横移動を防ぐ）
+        if (launchAngle < -0.08 && launchAngle > -Math.PI + 0.08) {
+            bulletVX = Math.cos(launchAngle) * speed;
+            bulletVY = Math.sin(launchAngle) * speed;
+            isMoving = true;
+            playSE(se.ballShoot);
+        }
+    }
+
+    pullX = 0; 
+    pullY = 0;
 }
 
 function getPixelCoords(r, c) {
@@ -937,17 +953,24 @@ function draw() {
 
     for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS);
 
+    // 📱 スマホ用ガイド・ドラッグ描画の改善
     if (isDragging) {
         let pullDist = Math.hypot(pullX, pullY);
-        if (pullDist > 8) {
+        // 一定以上引っ張った時だけエイムガイド（点線）を表示
+        if (pullDist >= MIN_PULL_CANCEL && pullY > 5) {
             let launchAngle = Math.atan2(-pullY, -pullX);
-            let guideLength = 220;
+            let guideLength = 260;
             ctx.beginPath(); ctx.moveTo(shooterX, shooterY);
             ctx.lineTo(shooterX + Math.cos(launchAngle) * guideLength, shooterY + Math.sin(launchAngle) * guideLength);
             ctx.strokeStyle = 'rgba(255, 204, 0, 0.95)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8]); ctx.stroke(); ctx.setLineDash([]); ctx.closePath();
         }
-        ctx.beginPath(); ctx.moveTo(shooterX, shooterY); ctx.lineTo(shooterX + pullX, shooterY + pullY);
-        ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 4; ctx.stroke(); ctx.closePath();
+        
+        // 引っ張り線の描画（手前に引っ張っているときのみ赤線を表示）
+        if (pullY > 0) {
+            ctx.beginPath(); ctx.moveTo(shooterX, shooterY); ctx.lineTo(shooterX + pullX, shooterY + pullY);
+            ctx.strokeStyle = pullDist >= MIN_PULL_CANCEL ? '#ff4d4d' : '#888888'; 
+            ctx.lineWidth = 4; ctx.stroke(); ctx.closePath();
+        }
         drawBubble(shooterX + pullX, shooterY + pullY, bulletColor, RADIUS);
     } else if (isMoving) {
         drawBubble(bulletX, bulletY, bulletColor, RADIUS);
