@@ -100,7 +100,7 @@ let bulletColor = getRandomShooterColor();
 let nextColor = getRandomShooterColor();
 let bombUsesLeft = 2;
 
-// 📱 スマホ操作用チューニング
+// スマホ操作用
 let isDragging = false;
 let dragStartX = 0;
 let dragStartY = 0;
@@ -124,9 +124,14 @@ let peer = null;
 let conn = null;
 const PEER_PREFIX = 'pb-game-room-2026-';
 
+// 画面表示制御（全画面クリーンアップ保証）
 function showScreen(screenId) {
-    document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
-    if (screenId === '') return;
+    document.querySelectorAll('.overlay-screen').forEach(s => {
+        s.style.display = 'none';
+    });
+    if (screenId === '' || !screenId) {
+        return;
+    }
     let target = document.getElementById(screenId);
     if (target) {
         target.style.display = 'flex';
@@ -150,7 +155,7 @@ function initGridForStage(stage) {
     grid = [];
     fallingBubbles = [];
     flashingBubbles = [];
-    
+
     for (let r = 0; r < ROWS; r++) {
         let row = [];
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
@@ -290,10 +295,8 @@ function setHostTargetWins(wins) {
     document.getElementById('btn-win-2').className = wins === 2 ? 'menu-btn' : 'menu-btn gray';
 }
 
-// 📜 ルール決定後の画面同期とルール表示
 function confirmHostBattleStart() {
     if (conn && conn.open) {
-        // 相手にルールを送信して双方ルール画面を表示
         conn.send({
             type: 'show_rule',
             targetWins: targetWins,
@@ -312,28 +315,28 @@ function showBattleRuleModal() {
     
     let winText = `🏆 勝敗条件: ${targetWins}回先に勝利した方の勝ち！`;
 
-    // ルール画面の文字更新
     let ruleContainer = document.getElementById('battle-rule-desc');
     if (ruleContainer) {
-        ruleContainer.innerHTML = `<p style="margin:8px 0;">${modeText}</p><p style="margin:8px 0; color:#ffcc00; font-weight:bold;">${winText}</p>`;
-    } else {
-        alert(`${modeText}\n${winText}`);
+        ruleContainer.innerHTML = `<p style="margin:8px 0; font-size:15px;">${modeText}</p><p style="margin:8px 0; color:#ffcc00; font-weight:bold; font-size:16px;">${winText}</p>`;
     }
 
     showScreen('screen-rule-confirm');
 
-    // ホストなら「ゲーム開始」ボタンを有効に
     let startBtn = document.getElementById('btn-start-battle-now');
     if (startBtn) {
         if (battleRole === 'host') {
-            startBtn.style.display = 'block';
+            startBtn.style.display = 'inline-block';
             startBtn.innerText = '対戦スタート！';
             startBtn.onclick = () => {
-                conn.send({ type: 'start_game' });
+                if (conn && conn.open) {
+                    conn.send({ type: 'start_game' });
+                }
                 startBattleGame();
             };
         } else {
-            startBtn.style.display = 'none'; // ゲストはホストの開始を待つ
+            startBtn.style.display = 'block';
+            startBtn.innerText = 'ホストの開始を待っています...';
+            startBtn.onclick = null;
         }
     }
 }
@@ -489,7 +492,6 @@ function checkGameOverCondition() {
     }
 }
 
-// 👑 対戦結果画面（1P / 2P 勝者判定）
 function checkBattleSetEnd(roundWinner) {
     if (myWins >= targetWins || opponentWins >= targetWins) {
         let isIWin = myWins >= targetWins;
@@ -592,7 +594,7 @@ function showRankingBoard() {
     let list = getRankings();
     let tbody = document.getElementById('ranking-list-body');
     tbody.innerHTML = '';
-    
+
     if (list.length === 0) {
         tbody.innerHTML = '<tr><td colspan="4" style="color:#888;">データがありません</td></tr>';
     } else {
@@ -663,7 +665,7 @@ function handleDragMove(pos) {
     let dx = pos.x - dragStartX;
     let dy = pos.y - dragStartY;
     let dist = Math.hypot(dx, dy);
-    
+
     if (dist > MAX_PULL_DISTANCE) {
         let angle = Math.atan2(dy, dx);
         dx = Math.cos(angle) * MAX_PULL_DISTANCE;
@@ -678,7 +680,7 @@ window.addEventListener('mouseup', () => { if (isDragging) { isDragging = false;
 
 function releaseBullet() {
     let pullDist = Math.hypot(pullX, pullY);
-    
+
     if (pullDist < MIN_PULL_CANCEL) {
         pullX = 0; pullY = 0; return; 
     }
@@ -687,7 +689,7 @@ function releaseBullet() {
         let power = Math.min(1.0, pullDist / MAX_PULL_DISTANCE);
         let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
         let launchAngle = Math.atan2(-pullY, -pullX);
-        
+
         if (launchAngle < -0.08 && launchAngle > -Math.PI + 0.08) {
             bulletVX = Math.cos(launchAngle) * speed;
             bulletVY = Math.sin(launchAngle) * speed;
@@ -842,7 +844,7 @@ function update() {
 function snapBullet() {
     isMoving = false;
     let cell = findCellForPosition(bulletX, bulletY);
-    
+
     if (cell.r >= 0 && cell.r < ROWS) {
         let colsInRow = (cell.r % 2 === 0) ? COLS : COLS - 1;
         cell.c = Math.max(0, Math.min(colsInRow - 1, cell.c));
@@ -911,7 +913,7 @@ function snapBullet() {
             }
         }
     }
-    
+
     spawnBullet();
     checkClearCondition();
     checkGameOverCondition();
@@ -994,7 +996,7 @@ function draw() {
             ctx.lineTo(shooterX + Math.cos(launchAngle) * guideLength, shooterY + Math.sin(launchAngle) * guideLength);
             ctx.strokeStyle = 'rgba(255, 204, 0, 0.95)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8]); ctx.stroke(); ctx.setLineDash([]); ctx.closePath();
         }
-        
+
         if (pullY > 0) {
             ctx.beginPath(); ctx.moveTo(shooterX, shooterY); ctx.lineTo(shooterX + pullX, shooterY + pullY);
             ctx.strokeStyle = pullDist >= MIN_PULL_CANCEL ? '#ff4d4d' : '#888888'; 
@@ -1041,16 +1043,15 @@ function drawGameClearScreen() {
     ctx.restore();
 }
 
-// 👑 対戦リザルト画面（1P WIN / 2P WIN 表示）
 function drawBattleResultScreen() {
     ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.save();
     ctx.textAlign = "center";
-    
+
     ctx.fillStyle = "#ffcc00"; 
     ctx.font = "bold 32px sans-serif";
     ctx.fillText(`${battleWinner} WIN!`, canvas.width / 2, canvas.height / 2 - 20);
-    
+
     ctx.fillStyle = "#ffffff"; 
     ctx.font = "bold 16px sans-serif";
     ctx.fillText(`最終スコア: ${myWins} - ${opponentWins}`, canvas.width / 2, canvas.height / 2 + 30);
@@ -1101,7 +1102,7 @@ function openSettings() {
     [...BASE_COLORS, SPECIAL_BOMB].forEach(col => {
         let rowDiv = document.createElement('div');
         rowDiv.style.cssText = "display:flex; align-items:center; justify-content:space-between; width:92%; background:#222; padding:10px 12px; margin:6px 0; border-radius:8px;";
-        
+
         let nameSpan = document.createElement('span');
         nameSpan.style.cssText = "font-size:13px; font-weight:bold;";
         nameSpan.innerText = COLOR_NAMES[col] || col;
@@ -1119,7 +1120,7 @@ function openSettings() {
         resetBtn.style.cssText = "padding:8px 10px; font-size:12px; width:auto; margin:0;";
         resetBtn.innerText = '🔄';
         resetBtn.onclick = () => { delete customImages[col]; openSettings(); };
-        
+
         let fileInput = document.createElement('input');
         fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.display = 'none';
         fileInput.onchange = (e) => {
