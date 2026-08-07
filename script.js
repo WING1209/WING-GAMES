@@ -9,7 +9,7 @@ const CANVAS_WIDTH = 380;
 const CANVAS_HEIGHT = 640;
 const BUBBLE_RADIUS = 16;
 const BUBBLE_DIAMETER = BUBBLE_RADIUS * 2;
-const ROW_HEIGHT = 28; // 六角形グリッドの行高
+const ROW_HEIGHT = 28;
 
 const GRID_ROWS = 14;
 const GRID_COLS = 8;
@@ -17,14 +17,13 @@ const BOARD_OFFSET_Y = 50;
 
 // バブルの色の種類
 const BUBBLE_COLORS = ["#ff4d4d", "#4da6ff", "#4dff4d", "#ffcc00", "#cc66ff", "#ff9933"];
-const COLOR_NAMES = ["赤", "青", "緑", "黄", "紫", "橙"];
 
 // ゲーム状態変数
 let grid = [];
 let shooter = { x: CANVAS_WIDTH / 2, y: 580, angle: -Math.PI / 2 };
 let currentBubble = null;
 let nextBubble = null;
-let bullet = null; // 飛んでいるバブル
+let bullet = null;
 
 let score = 0;
 let stage = 1;
@@ -33,7 +32,7 @@ let opponentWins = 0;
 let targetWins = 1;
 
 let gameMode = 'single'; // 'single' | 'online'
-let currentBattleType = 'タイムアタック'; // 'タイムアタック' | 'ラリー対戦'
+let currentBattleType = 'タイムアタック';
 let isHost = false;
 let isGameOver = false;
 let isGameClear = false;
@@ -41,7 +40,7 @@ let isGameClear = false;
 // 通信関連 (PeerJS)
 let peer = null;
 let conn = null;
-let myPeerId = "";
+const PEER_PREFIX = "wing-bubble-pad-"; // ID重複防止用プレフィックス
 
 // ==========================================
 // 🎮 初期化 & ゲーム開始
@@ -63,18 +62,16 @@ function initGrid() {
     }
 }
 
-// ひとりプレイ開始
 function startSinglePlay() {
     gameMode = 'single';
     stage = 1;
     score = 0;
     hideAllScreens();
     resetGameBoard();
-    createInitialBubbles(3 + stage); // ステージに応じた初期配置
+    createInitialBubbles(3 + stage);
     requestAnimationFrame(gameLoop);
 }
 
-// ボードのリセット
 function resetGameBoard() {
     initGrid();
     isGameOver = false;
@@ -92,7 +89,6 @@ function createRandomBubble() {
     };
 }
 
-// 初期配置の作成
 function createInitialBubbles(rows) {
     for (let r = 0; r < rows; r++) {
         const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
@@ -117,7 +113,6 @@ function setupControls() {
         const mouseX = touch.clientX - rect.left;
         const mouseY = touch.clientY - rect.top;
 
-        // 発射台からの角度計算（上方向限定）
         let angle = Math.atan2(mouseY - shooter.y, mouseX - shooter.x);
         if (angle > -Math.PI * 0.95 && angle < -Math.PI * 0.05) {
             shooter.angle = angle;
@@ -127,7 +122,6 @@ function setupControls() {
     function handleShoot() {
         if (isGameOver || isGameClear || bullet || !currentBubble) return;
         
-        // バブルの発射
         bullet = {
             x: shooter.x,
             y: shooter.y,
@@ -165,26 +159,22 @@ function gameLoop() {
     }
 }
 
-// バブルの移動・衝突処理
 function updateBullet() {
     if (!bullet) return;
 
     bullet.x += bullet.vx;
     bullet.y += bullet.vy;
 
-    // 左右の壁反射
     if (bullet.x - BUBBLE_RADIUS <= 0 || bullet.x + BUBBLE_RADIUS >= CANVAS_WIDTH) {
         bullet.vx *= -1;
         bullet.x = Math.max(BUBBLE_RADIUS, Math.min(CANVAS_WIDTH - BUBBLE_RADIUS, bullet.x));
     }
 
-    // 天井到着時
     if (bullet.y - BUBBLE_RADIUS <= BOARD_OFFSET_Y) {
         snapBulletToGrid();
         return;
     }
 
-    // 既存バブルとの衝突判定
     for (let r = 0; r < GRID_ROWS; r++) {
         const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -200,9 +190,7 @@ function updateBullet() {
     }
 }
 
-// スナップ処理＆消去・落下判定
 function snapBulletToGrid() {
-    // 一番近いグリッド位置を特定
     let bestR = 0, bestC = 0, minDist = Infinity;
 
     for (let r = 0; r < GRID_ROWS; r++) {
@@ -228,7 +216,6 @@ function snapBulletToGrid() {
     const shotColorIndex = bullet.colorIndex;
     bullet = null;
 
-    // 1. 同色マッチングの判定（3個以上で消去）
     const matched = findMatches(bestR, bestC, shotColorIndex);
     let poppedCount = 0;
     let droppedCount = 0;
@@ -239,34 +226,25 @@ function snapBulletToGrid() {
             grid[pos.r][pos.c] = null;
         });
 
-        // 2. ぶら下がっていない（浮いている）バブルを落とす
         droppedCount = removeFloatingBubbles();
         score += (poppedCount * 10) + (droppedCount * 20);
 
-        // 🔥🔥🔥 ラリー対戦時のお邪魔攻撃判定 🔥🔥🔥
         checkAndSendGarbage(poppedCount, droppedCount);
     }
 
-    // ゲーム終了判定
     checkGameStatus();
 }
 
 // ==========================================
-// 🔥🔥🔥 お邪魔攻撃＆せり上げロジック 🔥🔥🔥
+// 🔥 お邪魔攻撃＆せり上げロジック
 // ==========================================
-
-// 落としたバブル数に応じ相手にお邪魔攻撃を送る
 function checkAndSendGarbage(poppedCount, droppedCount) {
     if (gameMode !== 'online' || currentBattleType !== 'ラリー対戦') return;
 
     let sendLines = 0;
-
-    // ぶら下がっているバブルをたくさん落とした場合
     if (droppedCount >= 3) sendLines = 1;
     if (droppedCount >= 6) sendLines = 2;
     if (droppedCount >= 10) sendLines = 3;
-
-    // 同時消しボーナス
     if (poppedCount >= 5) sendLines += 1;
 
     if (sendLines > 0 && conn && conn.open) {
@@ -277,22 +255,18 @@ function checkAndSendGarbage(poppedCount, droppedCount) {
     }
 }
 
-// 攻撃を受けた時：下からランダムでお邪魔玉をせり上げる
 function receiveGarbageAttack(lines) {
     for (let l = 0; l < lines; l++) {
         pushBoardDownAndAddGarbageRow();
     }
-    // 画面オーバーチェック
     checkGameStatus();
 }
 
-// 盤面を1段押し下げて、空いた最上段にランダムなバブルを補充（お邪魔せり上げ）
 function pushBoardDownAndAddGarbageRow() {
     for (let r = GRID_ROWS - 1; r > 0; r--) {
         grid[r] = [...grid[r - 1]];
     }
 
-    // 最上行(0行目)に新しいお邪魔ランダム行を作成
     grid[0] = [];
     for (let c = 0; c < GRID_COLS; c++) {
         if (Math.random() > 0.2) {
@@ -304,7 +278,7 @@ function pushBoardDownAndAddGarbageRow() {
 }
 
 // ==========================================
-// 🔍 ロジック補助（マッチング・浮遊判定）
+// 🔍 判定ロジック
 // ==========================================
 function getNeighbors(r, c) {
     const isEven = (r % 2 === 0);
@@ -354,7 +328,6 @@ function removeFloatingBubbles() {
     const visited = Array.from({length: GRID_ROWS}, () => Array(GRID_COLS).fill(false));
     const queue = [];
 
-    // 天井(0行目)に接しているバブルから探索
     for (let c = 0; c < GRID_COLS; c++) {
         if (grid[0][c]) {
             queue.push({r: 0, c: c});
@@ -372,7 +345,6 @@ function removeFloatingBubbles() {
         });
     }
 
-    // 天井と繋がっていない浮いているバブルを特定して削除
     let droppedCount = 0;
     for (let r = 0; r < GRID_ROWS; r++) {
         const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
@@ -389,7 +361,6 @@ function removeFloatingBubbles() {
 function checkGameStatus() {
     let hasBubbles = false;
 
-    // デッドライン(発射台付近)に到達したか
     for (let c = 0; c < GRID_COLS; c++) {
         if (grid[GRID_ROWS - 1][c] || grid[GRID_ROWS - 2][c]) {
             isGameOver = true;
@@ -398,7 +369,6 @@ function checkGameStatus() {
         }
     }
 
-    // 全消しクリア判定
     for (let r = 0; r < GRID_ROWS; r++) {
         const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -414,7 +384,7 @@ function checkGameStatus() {
         if (gameMode === 'single') {
             showStageClearScreen();
         } else {
-            showGameOverScreen(true); // オンライン戦勝利
+            showGameOverScreen(true);
         }
     }
 }
@@ -431,7 +401,6 @@ function getBubbleCanvasPos(r, c) {
 }
 
 function drawBoard() {
-    // 枠線・背景ヘッダー
     ctx.fillStyle = "#1a1a24";
     ctx.fillRect(0, 0, CANVAS_WIDTH, BOARD_OFFSET_Y);
     ctx.strokeStyle = "#ffcc00";
@@ -441,12 +410,10 @@ function drawBoard() {
     ctx.lineTo(CANVAS_WIDTH, BOARD_OFFSET_Y);
     ctx.stroke();
 
-    // スコア・ステータス表示
     ctx.fillStyle = "#ffcc00";
     ctx.font = "bold 14px sans-serif";
     ctx.fillText(`SCORE: ${score}`, 15, 30);
 
-    // デッドライン表示
     ctx.strokeStyle = "rgba(255, 77, 77, 0.5)";
     ctx.setLineDash([6, 6]);
     ctx.beginPath();
@@ -455,7 +422,6 @@ function drawBoard() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // 配置されたバブル描画
     for (let r = 0; r < GRID_ROWS; r++) {
         const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -466,14 +432,12 @@ function drawBoard() {
         }
     }
 
-    // 移動中のバブル描画
     if (bullet) {
         drawBubble(bullet.x, bullet.y, bullet.colorIndex);
     }
 }
 
 function drawShooter() {
-    // 照準ガイド線
     ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
     ctx.lineWidth = 2;
     ctx.setLineDash([4, 4]);
@@ -483,7 +447,6 @@ function drawShooter() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // 次のバブル表示
     if (nextBubble) {
         drawBubble(60, 580, nextBubble.colorIndex, 12);
         ctx.fillStyle = "#aaa";
@@ -491,13 +454,11 @@ function drawShooter() {
         ctx.fillText("NEXT", 48, 605);
     }
 
-    // 装填バブル表示
     if (currentBubble && !bullet) {
         drawBubble(shooter.x, shooter.y, currentBubble.colorIndex);
     }
 }
 
-// ✨ バブル描画（カスタム画像対応）
 let customImages = [];
 function loadCustomImages() {
     for (let i = 0; i < BUBBLE_COLORS.length; i++) {
@@ -511,7 +472,6 @@ function drawBubble(x, y, colorIndex, radius = BUBBLE_RADIUS) {
         return;
     }
 
-    // グラデーション描画
     const grad = ctx.createRadialGradient(x - radius/3, y - radius/3, radius/4, x, y, radius);
     grad.addColorStop(0, "#ffffff");
     grad.addColorStop(0.3, BUBBLE_COLORS[colorIndex]);
@@ -544,8 +504,7 @@ function showScreen(screenId) {
 }
 
 function returnToTitle() {
-    hideAllScreens();
-    showScreen('screen-mode');
+    cancelNetwork('screen-mode');
     drawTitleBackground();
 }
 
@@ -599,18 +558,25 @@ function handleGameOverNextAction() {
 }
 
 // ==========================================
-// 🌐 ネットワーク対戦 (PeerJS)
+// 🌐 ネットワーク対戦 (PeerJS通信強化版)
 // ==========================================
 function setupRole(role) {
     isHost = (role === 'host');
-    const myCode = Math.floor(1000 + Math.random() * 9000).toString();
+    if (peer) peer.destroy();
 
-    peer = new Peer(myCode);
+    // 4桁コードの生成
+    const rawCode = Math.floor(1000 + Math.random() * 9000).toString();
+    const fullPeerId = PEER_PREFIX + rawCode;
+
+    if (isHost) {
+        peer = new Peer(fullPeerId);
+    } else {
+        peer = new Peer(); // ゲストはランダムIDでOK
+    }
 
     peer.on('open', (id) => {
-        myPeerId = id;
         if (isHost) {
-            document.getElementById('display-room-code').innerText = id;
+            document.getElementById('display-room-code').innerText = rawCode;
             showScreen('screen-host-wait');
         } else {
             showScreen('screen-guest-join');
@@ -624,28 +590,42 @@ function setupRole(role) {
             showScreen('screen-host-rule-setup');
         }
     });
+
+    peer.on('error', (err) => {
+        console.error('PeerJS Error:', err);
+        const statusEl = document.getElementById('status-message');
+        if (statusEl) statusEl.innerText = "通信エラーが発生しました。再試行してください。";
+    });
 }
 
 function joinRoom() {
-    const code = document.getElementById('input-room-code').value;
-    if (code.length !== 4) {
-        document.getElementById('status-message').innerText = "4桁の番号を入力してください";
+    const inputCode = document.getElementById('input-room-code').value.trim();
+    const statusEl = document.getElementById('status-message');
+
+    if (inputCode.length !== 4) {
+        if (statusEl) statusEl.innerText = "4桁の番号を入力してください";
         return;
     }
 
-    conn = peer.connect(code);
-    setupConnectionHandlers();
-    showScreen('screen-guest-wait-rule');
+    if (statusEl) statusEl.innerText = "接続中...";
+
+    const targetPeerId = PEER_PREFIX + inputCode;
+    conn = peer.connect(targetPeerId);
+
+    conn.on('open', () => {
+        if (statusEl) statusEl.innerText = "";
+        setupConnectionHandlers();
+        showScreen('screen-guest-wait-rule');
+    });
+
+    conn.on('error', (err) => {
+        if (statusEl) statusEl.innerText = "部屋が見つかりませんでした。";
+    });
 }
 
 function setupConnectionHandlers() {
-    conn.on('open', () => {
-        // 通信接続成功
-    });
-
     conn.on('data', (data) => {
         if (data.type === 'attack_garbage') {
-            // お邪魔攻撃を受信
             receiveGarbageAttack(data.lines);
         } else if (data.type === 'start_game') {
             currentBattleType = data.battleType;
@@ -656,6 +636,11 @@ function setupConnectionHandlers() {
             createInitialBubbles(5);
             requestAnimationFrame(gameLoop);
         }
+    });
+
+    conn.on('close', () => {
+        alert("対戦相手との通信が切断されました");
+        returnToTitle();
     });
 }
 
@@ -679,6 +664,7 @@ function confirmHostBattleStart() {
             targetWins: targetWins
         });
     }
+
     gameMode = 'online';
     hideAllScreens();
     resetGameBoard();
@@ -689,9 +675,11 @@ function confirmHostBattleStart() {
 function cancelNetwork(nextScreen) {
     if (conn) conn.close();
     if (peer) peer.destroy();
+    conn = null;
+    peer = null;
     showScreen(nextScreen);
 }
 
-// ランキング・設定表示ダミー
+// UI補助関数
 function showRankingBoard() { showScreen('screen-ranking'); }
 function closeSettings() { document.getElementById('settings-overlay').style.display = 'none'; }
