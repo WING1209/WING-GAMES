@@ -126,7 +126,7 @@ let peer = null;
 let conn = null;
 const PEER_PREFIX = 'pb-game-room-2026-';
 
-// 画面表示制御（全画面クリーンアップ保証）
+// 画面表示制御
 function showScreen(screenId) {
     document.querySelectorAll('.overlay-screen').forEach(s => {
         s.style.display = 'none';
@@ -314,7 +314,7 @@ function confirmHostBattleStart() {
 function showBattleRuleModal() {
     let modeText = battleType === 'タイムアタック' 
         ? '⏱️ タイムアタック: 先にすべての玉を消せば勝利！'
-        : '🔥 ラリー対戦: 消した玉が相手側にせり出るぞ！';
+        : '🔥 ラリー対戦: 消えた＋落ちた玉が合計4個以上で相手におじゃま玉を送るぞ！';
     
     let winText = `🏆 勝敗条件: ${targetWins}回先に勝利した方の勝ち！`;
 
@@ -377,19 +377,28 @@ function startNextRound() {
 }
 
 function sendAttackToOpponent(amount) {
-    if (conn && conn.open && battleType === 'ラリー対戦') {
+    if (conn && conn.open && gameMode === 'battle' && battleType === 'ラリー対戦') {
         conn.send({ type: 'attack', amount: amount });
     }
 }
 
 function addOjamaBubbles(amount) {
-    for (let r = 0; r < Math.min(amount, 2); r++) {
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] === null) {
-                grid[r][c] = getRandomGridColor();
-            }
+    let emptyIndices = [];
+    for (let c = 0; c < COLS; c++) {
+        if (grid[0][c] === null) {
+            emptyIndices.push(c);
         }
+    }
+
+    for (let i = emptyIndices.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [emptyIndices[i], emptyIndices[j]] = [emptyIndices[j], emptyIndices[i]];
+    }
+
+    let placeCount = Math.min(amount, emptyIndices.length);
+    for (let i = 0; i < placeCount; i++) {
+        let c = emptyIndices[i];
+        grid[0][c] = getRandomGridColor();
     }
 }
 
@@ -727,11 +736,8 @@ function getPixelCoords(r, c) {
     return { x, y };
 }
 
-// 🎯 壁バウンド後でも一番上の壁に正しく固定するためのロジック改善
 function findCellForPosition(x, y) {
     let bestR = 0, bestC = 0, minDist = Infinity;
-    
-    // 天井（上端）に当たった場合は優先的に行0 (ROW 0) を検索対象にする
     let startRow = (y <= TOP_MARGIN + RADIUS + 5) ? 0 : 0;
     
     for (let r = startRow; r < ROWS; r++) {
@@ -801,6 +807,7 @@ function removeFloating() {
         score += droppedCount * 20;
         playSE(se.blockFall);
     }
+    return droppedCount;
 }
 
 function markConnectedFromCeiling(r, c, visited) {
@@ -819,7 +826,6 @@ function update() {
         return;
     }
 
-    // ⏱️ ひとりであそぶモードのカウントダウン管理
     if (gameState === 'playing' && gameMode === 'single') {
         let now = Date.now();
         if (now - lastTimerUpdate >= 1000) {
@@ -843,7 +849,7 @@ function update() {
         flashingBubbles[i].timer--;
         if (flashingBubbles[i].timer <= 0) {
             flashingBubbles.splice(i, 1);
-            removeFloating();
+            let dropCount = removeFloating();
             checkClearCondition();
         }
     }
@@ -856,7 +862,6 @@ function update() {
         bulletX += bulletVX;
         bulletY += bulletVY;
 
-        // 左右の壁反射
         if (bulletX - RADIUS < 0) { 
             bulletX = RADIUS; 
             bulletVX *= -1; 
@@ -865,9 +870,8 @@ function update() {
             bulletVX *= -1; 
         }
 
-        // 🛠️ 天井（一番上の壁）当たり判定の完全補正
         if (bulletY - RADIUS <= TOP_MARGIN) {
-            bulletY = TOP_MARGIN + RADIUS; // 上限を強制固定
+            bulletY = TOP_MARGIN + RADIUS;
             snapBullet();
             return;
         }
@@ -915,7 +919,10 @@ function snapBullet() {
                     }
                 }
                 triggerFlashEffect(flashList, flashList.length * 40);
-                if (flashList.length >= 4) sendAttackToOpponent(2);
+                
+                if (flashList.length >= 4) {
+                    sendAttackToOpponent(flashList.length);
+                }
             } else if (bulletColor === SPECIAL_RAINBOW) {
                 playSE(se.rainbowLand);
                 let targetColor = null;
@@ -940,8 +947,11 @@ function snapBullet() {
                         }
                     }
                     score += clearedCount * 30;
-                    if (clearedCount >= 4) sendAttackToOpponent(2);
-                    removeFloating();
+                    let dropCount = removeFloating();
+                    let totalRemoved = clearedCount + dropCount;
+                    if (totalRemoved >= 4) {
+                        sendAttackToOpponent(totalRemoved);
+                    }
                 }
             } else {
                 playSE(se.ballLand);
@@ -953,8 +963,13 @@ function snapBullet() {
                         fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: bulletColor });
                         grid[m.r][m.c] = null; score += 10;
                     }
-                    if (matches.length >= 4) sendAttackToOpponent(1);
-                    removeFloating();
+                    
+                    let dropCount = removeFloating();
+                    let totalRemoved = matches.length + dropCount;
+
+                    if (totalRemoved >= 4) {
+                        sendAttackToOpponent(totalRemoved);
+                    }
                 }
             }
         }
@@ -1060,10 +1075,13 @@ function draw() {
     }
 }
 
+// ✨ タイトルの文字表示変更箇所
 function drawTitleBackground() {
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#aaa"; ctx.font = "bold 14px sans-serif"; ctx.fillText("パズルボブル風 オンライン＆ランキング版", 15, 30);
+    ctx.fillStyle = "#ffcc00"; 
+    ctx.font = "bold 16px sans-serif"; 
+    ctx.fillText("○o WINGの暇つぶし o○", 15, 30);
 }
 
 function drawGameClearScreen() {
