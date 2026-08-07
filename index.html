@@ -112,10 +112,6 @@
             color: #888;
         }
 
-        .menu-btn.danger {
-            background: linear-gradient(135deg, #e53935, #b71c1c);
-        }
-
         /* 入力フォーム */
         input[type="text"] {
             width: 200px;
@@ -160,7 +156,6 @@
             color: #ffcc00;
         }
 
-        /* 設定ダイアログ用モーダル */
         #settings-overlay {
             position: absolute;
             top: 0;
@@ -197,13 +192,13 @@
     <div id="screen-mode" class="overlay-screen">
         <h1>○o WINGの暇つぶし o○</h1>
         <button class="menu-btn" onclick="startSinglePlay()">🎮 ひとりプレイ</button>
-        <button class="menu-btn sub" onclick="showScreen('screen-role-select')">🌐 オンライン対戦</button>
+        <button class="menu-btn sub" onclick="showScreen('screen-role-select')">🍺 フレンド対戦🍺</button>
         <button class="menu-btn gray" onclick="showRankingBoard()">🏆 ランキング</button>
     </div>
 
     <!-- 2. 対戦役割選択画面 -->
     <div id="screen-role-select" class="overlay-screen" style="display:none;">
-        <h2>オンライン対戦</h2>
+        <h2>フレンド対戦🍺</h2>
         <p>部屋を作成するか、入力して参加してください</p>
         <button class="menu-btn" onclick="setupRole('host')">🏠 部屋をつくる (HOST)</button>
         <button class="menu-btn sub" onclick="setupRole('guest')">🔑 部屋にはいる (GUEST)</button>
@@ -235,7 +230,7 @@
         <button class="menu-btn" onclick="confirmHostBattleStart()">決定して開始</button>
     </div>
 
-    <!-- 5. ゲスト: ルームコード入力画面 -->
+    <!-- 5. ゲスト: ルールコード入力画面 -->
     <div id="screen-guest-join" class="overlay-screen" style="display:none;">
         <h2>部屋に入る</h2>
         <p>ホストから教えてもらった4桁のコードを入力</p>
@@ -251,14 +246,14 @@
         <p>ホストがルールを設定しています...<br>しばらくお待ちください。</p>
     </div>
 
-    <!-- 7. 対戦ルール確認モーダル（ホスト・ゲスト共通） -->
+    <!-- 7. 対戦ルール確認モーダル -->
     <div id="screen-rule-confirm" class="overlay-screen" style="display:none;">
         <h2>🎮 対戦ルール決定</h2>
         <div id="battle-rule-desc" style="background:#222; padding:12px; border-radius:8px; margin-bottom:15px; width:100%;"></div>
         <button id="btn-start-battle-now" class="menu-btn">対戦スタート！</button>
     </div>
 
-    <!-- 8. ステージクリア画面（一人プレイ用） -->
+    <!-- 8. ステージクリア画面 -->
     <div id="screen-stage-clear" class="overlay-screen" style="display:none;">
         <h2>STAGE CLEAR!</h2>
         <p id="clear-score-text"></p>
@@ -273,7 +268,7 @@
         <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ</button>
     </div>
 
-    <!-- 10. 名前入力（ランキング用） -->
+    <!-- 10. 名前入力 -->
     <div id="screen-name-input" class="overlay-screen" style="display:none;">
         <h2 style="color:#ffcc00;">🏆 ランクイン！</h2>
         <p id="rankin-desc-text"></p>
@@ -295,13 +290,12 @@
                 </tr>
             </thead>
             <tbody id="ranking-list-body">
-                <!-- JavaScriptで挿入 -->
             </tbody>
         </table>
         <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ</button>
     </div>
 
-    <!-- ⚙️ 玉の見た目設定モーダル -->
+    <!-- ⚙️ カスタマイズモーダル -->
     <div id="settings-overlay">
         <div class="settings-card">
             <h2>⚙️ 玉の画像カスタマイズ</h2>
