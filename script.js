@@ -1,7 +1,7 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// --- 🔊 サウンド（SE & BGM）設定（エラー防止ガード付き） ---
+// --- 🔊 サウンド（SE & BGM）設定 ---
 const audioPath = 'audio/';
 
 const se = {
@@ -82,7 +82,7 @@ let targetWins = 1;
 let myWins = 0;
 let opponentWins = 0;
 
-let battleRole = '';
+let battleRole = ''; // 'host' or 'guest'
 let roomCode = '';
 let gameState = 'title';
 
@@ -100,14 +100,14 @@ let bulletColor = getRandomShooterColor();
 let nextColor = getRandomShooterColor();
 let bombUsesLeft = 2;
 
-// 📱 スマホ操作用チューニングパラメータ
+// 📱 スマホ操作用チューニング
 let isDragging = false;
 let dragStartX = 0;
 let dragStartY = 0;
 let pullX = 0;
 let pullY = 0;
 const MAX_PULL_DISTANCE = 110;
-const MIN_PULL_CANCEL = 25; // 最低これだけ引っ張らないとキャンセルされる（誤射防止）
+const MIN_PULL_CANCEL = 25;
 const MIN_SPEED = 10;
 const MAX_SPEED = 24;
 let isMoving = false;
@@ -197,6 +197,7 @@ function startSinglePlay() {
     showScreen('');
 }
 
+// 🌐 PeerJS 通信処理
 function setupRole(role) {
     battleRole = role;
     closeNetwork();
@@ -214,7 +215,7 @@ function setupRole(role) {
                 showScreen('screen-host-rule-setup');
             });
         });
-        peer.on('error', (err) => {
+        peer.on('error', () => {
             alert('接続エラーが発生しました。もう一度試してください。');
             showScreen('screen-role-select');
         });
@@ -253,9 +254,11 @@ function setupConnectionListeners() {
     });
 
     conn.on('data', (data) => {
-        if (data.type === 'start_game') {
+        if (data.type === 'show_rule') {
             targetWins = data.targetWins;
             battleType = data.battleType;
+            showBattleRuleModal();
+        } else if (data.type === 'start_game') {
             startBattleGame();
         } else if (data.type === 'attack' && battleType === 'ラリー対戦') {
             addOjamaBubbles(data.amount);
@@ -287,16 +290,51 @@ function setHostTargetWins(wins) {
     document.getElementById('btn-win-2').className = wins === 2 ? 'menu-btn' : 'menu-btn gray';
 }
 
+// 📜 ルール決定後の画面同期とルール表示
 function confirmHostBattleStart() {
     if (conn && conn.open) {
+        // 相手にルールを送信して双方ルール画面を表示
         conn.send({
-            type: 'start_game',
+            type: 'show_rule',
             targetWins: targetWins,
             battleType: battleType
         });
-        startBattleGame();
+        showBattleRuleModal();
     } else {
         alert('ゲストとの通信が確立されていません');
+    }
+}
+
+function showBattleRuleModal() {
+    let modeText = battleType === 'タイムアタック' 
+        ? '⏱️ タイムアタック: 先にすべての玉を消せば勝利！'
+        : '🔥 ラリー対戦: 消した玉が相手側にせり出るぞ！';
+    
+    let winText = `🏆 勝敗条件: ${targetWins}回先に勝利した方の勝ち！`;
+
+    // ルール画面の文字更新
+    let ruleContainer = document.getElementById('battle-rule-desc');
+    if (ruleContainer) {
+        ruleContainer.innerHTML = `<p style="margin:8px 0;">${modeText}</p><p style="margin:8px 0; color:#ffcc00; font-weight:bold;">${winText}</p>`;
+    } else {
+        alert(`${modeText}\n${winText}`);
+    }
+
+    showScreen('screen-rule-confirm');
+
+    // ホストなら「ゲーム開始」ボタンを有効に
+    let startBtn = document.getElementById('btn-start-battle-now');
+    if (startBtn) {
+        if (battleRole === 'host') {
+            startBtn.style.display = 'block';
+            startBtn.innerText = '対戦スタート！';
+            startBtn.onclick = () => {
+                conn.send({ type: 'start_game' });
+                startBattleGame();
+            };
+        } else {
+            startBtn.style.display = 'none'; // ゲストはホストの開始を待つ
+        }
     }
 }
 
@@ -451,9 +489,15 @@ function checkGameOverCondition() {
     }
 }
 
+// 👑 対戦結果画面（1P / 2P 勝者判定）
 function checkBattleSetEnd(roundWinner) {
     if (myWins >= targetWins || opponentWins >= targetWins) {
-        battleWinner = myWins >= targetWins ? 'YOU' : 'OPPONENT';
+        let isIWin = myWins >= targetWins;
+        if (battleRole === 'host') {
+            battleWinner = isIWin ? '1P (HOST)' : '2P (GUEST)';
+        } else {
+            battleWinner = isIWin ? '2P (GUEST)' : '1P (HOST)';
+        }
         gameState = 'battle_result';
         stopBGM();
         showScreen('');
@@ -566,7 +610,6 @@ function showRankingBoard() {
     showScreen('screen-ranking');
 }
 
-// 📱 スマホ特化：タッチ座標の高精度計算
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
@@ -576,7 +619,6 @@ function getTouchPos(e) {
     return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
 }
 
-// 📱 スマホ特化：画面スクロール防止・ダブルタップズーム防止処理
 window.addEventListener('touchstart', (e) => {
     if (e.target === canvas) e.preventDefault();
     handleInputStart(getTouchPos(e));
@@ -591,17 +633,14 @@ function handleInputStart(pos) {
     if (gameState === 'battle_result') { returnToTitle(); return; }
 
     if (gameState === 'playing' && !isMoving) {
-        // 設定ボタンタップ判定
         if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
             openSettings(); return;
         }
-        // ボムボタンタップ判定
         if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
             if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
             return;
         }
 
-        // スマホ特化：画面の下半分のどこかを触った時だけドラッグを開始（上部エリアの誤誤爆防止）
         if (pos.y > TOP_MARGIN + 100) {
             isDragging = true;
             dragStartX = pos.x;
@@ -640,22 +679,15 @@ window.addEventListener('mouseup', () => { if (isDragging) { isDragging = false;
 function releaseBullet() {
     let pullDist = Math.hypot(pullX, pullY);
     
-    // 📱 スマホ特化：引き代が少なすぎる場合は「操作キャンセル」とみなして発射しない
     if (pullDist < MIN_PULL_CANCEL) {
-        pullX = 0; 
-        pullY = 0; 
-        return; 
+        pullX = 0; pullY = 0; return; 
     }
 
-    // 📱 引っ張る方向が「下向き（手前）」のときだけ発射（上へ引っ張った場合はキャンセル）
     if (pullY > 5) {
         let power = Math.min(1.0, pullDist / MAX_PULL_DISTANCE);
         let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
-        
-        // 引っ張った方向の「真反対」へ飛ばす
         let launchAngle = Math.atan2(-pullY, -pullX);
         
-        // 角度チェック（極端な横移動を防ぐ）
         if (launchAngle < -0.08 && launchAngle > -Math.PI + 0.08) {
             bulletVX = Math.cos(launchAngle) * speed;
             bulletVY = Math.sin(launchAngle) * speed;
@@ -664,8 +696,7 @@ function releaseBullet() {
         }
     }
 
-    pullX = 0; 
-    pullY = 0;
+    pullX = 0; pullY = 0;
 }
 
 function getPixelCoords(r, c) {
@@ -902,7 +933,8 @@ function draw() {
     ctx.fillStyle = "#fff";
     ctx.font = "bold 12px sans-serif";
     if (gameMode === 'battle') {
-        ctx.fillText(`対戦(${targetWins}勝先取): ${myWins} - ${opponentWins}`, 12, 28);
+        let roleName = battleRole === 'host' ? '1P(ホスト)' : '2P(ゲスト)';
+        ctx.fillText(`[${roleName}] 勝敗: ${myWins} - ${opponentWins}`, 12, 28);
     } else {
         ctx.fillText(`STAGE ${currentStage}/10`, 12, 28);
     }
@@ -953,10 +985,8 @@ function draw() {
 
     for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS);
 
-    // 📱 スマホ用ガイド・ドラッグ描画の改善
     if (isDragging) {
         let pullDist = Math.hypot(pullX, pullY);
-        // 一定以上引っ張った時だけエイムガイド（点線）を表示
         if (pullDist >= MIN_PULL_CANCEL && pullY > 5) {
             let launchAngle = Math.atan2(-pullY, -pullX);
             let guideLength = 260;
@@ -965,7 +995,6 @@ function draw() {
             ctx.strokeStyle = 'rgba(255, 204, 0, 0.95)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8]); ctx.stroke(); ctx.setLineDash([]); ctx.closePath();
         }
         
-        // 引っ張り線の描画（手前に引っ張っているときのみ赤線を表示）
         if (pullY > 0) {
             ctx.beginPath(); ctx.moveTo(shooterX, shooterY); ctx.lineTo(shooterX + pullX, shooterY + pullY);
             ctx.strokeStyle = pullDist >= MIN_PULL_CANCEL ? '#ff4d4d' : '#888888'; 
@@ -1012,12 +1041,24 @@ function drawGameClearScreen() {
     ctx.restore();
 }
 
+// 👑 対戦リザルト画面（1P WIN / 2P WIN 表示）
 function drawBattleResultScreen() {
     ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#ffcc00"; ctx.font = "bold 32px sans-serif"; ctx.textAlign = "center";
-    ctx.fillText(`${battleWinner} WIN!`, canvas.width / 2, canvas.height / 2 - 40);
-    ctx.fillStyle = "#4da6ff"; ctx.font = "14px sans-serif"; ctx.fillText("画面をタップしてタイトルへ", canvas.width / 2, canvas.height / 2 + 20);
-    ctx.textAlign = "left";
+    ctx.save();
+    ctx.textAlign = "center";
+    
+    ctx.fillStyle = "#ffcc00"; 
+    ctx.font = "bold 32px sans-serif";
+    ctx.fillText(`${battleWinner} WIN!`, canvas.width / 2, canvas.height / 2 - 20);
+    
+    ctx.fillStyle = "#ffffff"; 
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillText(`最終スコア: ${myWins} - ${opponentWins}`, canvas.width / 2, canvas.height / 2 + 30);
+
+    ctx.fillStyle = "#4da6ff"; 
+    ctx.font = "14px sans-serif"; 
+    ctx.fillText("画面をタップしてタイトルへ", canvas.width / 2, canvas.height / 2 + 80);
+    ctx.restore();
 }
 
 function drawBubble(x, y, color, r) {
