@@ -82,20 +82,14 @@ let opponentWins = 0;
 
 let battleRole = ''; // 'host' | 'guest'
 let roomCode = '';
-let gameState = 'title'; // 'title' | 'how_to_play' | 'mode_select' | 'playing' ...
+let gameState = 'title';
 
-// 🎯 発射台位置の設定（画面内に確実に収まる位置へ調整）
 let shooterX = canvas.width / 2;
-let shooterY = canvas.height - 60;
+let shooterY = canvas.height - 120;
 let bulletX = shooterX;
 let bulletY = shooterY;
 let bulletVX = 0;
 let bulletVY = 0;
-
-function updateShooterPosition() {
-    shooterX = canvas.width / 2;
-    shooterY = Math.max(TOP_MARGIN + 100, canvas.height - 60);
-}
 
 const SPECIAL_RAINBOW = 'SPECIAL_RAINBOW';
 const SPECIAL_BOMB = 'SPECIAL_BOMB';
@@ -119,7 +113,7 @@ let flashingBubbles = [];
 let particles = [];
 let battleWinner = '';
 
-// タイマー関連（ソロモード 1ステージ150秒リセット）
+// タイマー関連（ソロモード：1ステージ150秒スタート）
 const STAGE_TIME_LIMIT = 150;
 let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
@@ -129,7 +123,6 @@ let peer = null;
 let conn = null;
 const PEER_PREFIX = 'pb-game-room-2026-v2-';
 
-// --- 画面表示制御 ---
 function showScreen(screenId) {
     document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
     if (screenId === '') return;
@@ -144,30 +137,15 @@ function showScreen(screenId) {
             if (logo) {
                 logo.style.animation = 'none';
                 logo.offsetHeight; /* trigger reflow */
-                logo.style.animation = 'dropTitle 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards';
+                logo.style.animation = null;
             }
-        } else if (screenId === 'screen-how-to-play') {
-            gameState = 'how_to_play';
-        } else if (screenId === 'screen-mode-select') {
-            gameState = 'mode_select';
         }
     }
 }
 
-// 画面遷移フロー
 function goToHowToPlay() {
     if (gameState === 'title') {
         showScreen('screen-how-to-play');
-    }
-}
-
-function goToModeSelect() {
-    showScreen('screen-mode-select');
-}
-
-function exitGame() {
-    if (confirm('ゲームを終了してタイトル画面に戻りますか？')) {
-        returnToTitle();
     }
 }
 
@@ -446,17 +424,6 @@ function nextStageAction() {
     }
 }
 
-function retryStage() {
-    bombUsesLeft = 2;
-    remainingTime = STAGE_TIME_LIMIT;
-    initGridForStage(currentStage);
-    spawnBullet();
-    gameState = 'playing';
-    playRandomBGM();
-    startTimer();
-    showScreen('');
-}
-
 function returnToTitle() {
     closeNetwork();
     stopBGM();
@@ -474,7 +441,6 @@ function spawnBullet() {
 }
 
 function resetBulletPos() {
-    updateShooterPosition();
     bulletX = shooterX;
     bulletY = shooterY;
     bulletVX = 0;
@@ -519,25 +485,38 @@ function checkClearCondition() {
     }
 }
 
+// 🎯 ゲームオーバー処理（再挑戦なし・3秒後ランキング判定・遷移）
+function triggerSoloGameOver(msg) {
+    stopTimer();
+    stopBGM();
+    playSE(se.gameOver);
+    gameState = 'gameover_menu';
+    document.getElementById('gameover-score-text').innerText = `${msg}\nスコア: ${score}`;
+    showScreen('screen-game-over');
+
+    // 3秒間表示後に判定へ移動
+    setTimeout(() => {
+        checkSoloGameOverRankIn();
+    }, 3000);
+}
+
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
 
-    let limitRow = ROWS - 3;
+    let limitRow = ROWS - 3; // デッドライン
+
     for (let r = limitRow; r < ROWS; r++) {
         let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
         for (let cc = 0; cc < rowCols; cc++) {
             if (grid[r][cc] !== null) {
-                playSE(se.gameOver);
-                stopBGM();
                 if (gameMode === 'battle') {
+                    playSE(se.gameOver);
+                    stopBGM();
                     opponentWins++;
                     if (conn && conn.open) conn.send({ type: 'round_loss' });
                     checkBattleSetEnd('OPPONENT');
                 } else {
-                    stopTimer();
-                    gameState = 'gameover_menu';
-                    document.getElementById('gameover-score-text').innerText = `ステージ ${currentStage} で終了\nスコア: ${score}`;
-                    showScreen('screen-game-over');
+                    triggerSoloGameOver(`ステージ ${currentStage} で終了`);
                 }
                 return;
             }
@@ -546,11 +525,7 @@ function checkGameOverCondition() {
 }
 
 function handleTimeOutGameOver() {
-    playSE(se.gameOver);
-    stopBGM();
-    gameState = 'gameover_menu';
-    document.getElementById('gameover-score-text').innerText = `タイムアップ！ (ステージ ${currentStage})\nスコア: ${score}`;
-    showScreen('screen-game-over');
+    triggerSoloGameOver(`タイムアップ！ (ステージ ${currentStage})`);
 }
 
 function checkSoloGameOverRankIn() {
@@ -604,7 +579,6 @@ function requestRematch() {
     startNextRound();
 }
 
-// 🎉 勝利・全クリア時演出
 function initWinParticles() {
     particles = [];
     const colors = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda', '#ffffff', '#ffcc00'];
@@ -623,7 +597,6 @@ function initWinParticles() {
     }
 }
 
-// ☔ 敗北時演出
 function initLoseParticles() {
     particles = [];
     for (let i = 0; i < 100; i++) {
@@ -749,10 +722,7 @@ window.addEventListener('touchstart', (e) => {
 window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
 
 function handleInputStart(pos) {
-    if (gameState === 'title') {
-        goToHowToPlay();
-        return;
-    }
+    if (gameState === 'title') return;
 
     if (gameState === 'gameclear') {
         promptNameInput();
@@ -903,8 +873,6 @@ function markConnectedFromCeiling(r, c, visited) {
 }
 
 function update() {
-    updateShooterPosition();
-
     if (gameState === 'gameclear' || gameState === 'battle_result') {
         updateParticles();
         return;
@@ -1150,7 +1118,7 @@ function drawGameClearScreen() {
     ctx.font = "bold 18px sans-serif";
     ctx.fillStyle = "#ffffff";
     ctx.fillText(`ALL STAGE CLEAR!`, canvas.width / 2, canvas.height / 2 + 10);
-    ctx.fillText(`TIME: ${totalClearTime}s / SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 45);
+    ctx.fillText(`TIME: ${totalClearTime}秒 / SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 45);
 
     ctx.font = "14px sans-serif";
     ctx.fillStyle = "#4da6ff";
