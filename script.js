@@ -1,8 +1,7 @@
 /* ===================================================
-   バブルパズル (Puzzle Bubble) - フル機能復元版 script.js
+   ○o WING GAME玉 o○ - 完全修正版 script.js
    =================================================== */
 
-// --- 音響システム (Web Audio API) ---
 class SoundSystem {
     constructor() {
         this.ctx = null;
@@ -102,7 +101,7 @@ class SoundSystem {
 
 const audio = new SoundSystem();
 
-// --- 画面UI制御 ---
+// --- 画面UI切り替え制御 ---
 function showScreen(screenId) {
     document.querySelectorAll('.overlay-screen').forEach(el => el.classList.remove('active'));
     if (screenId) {
@@ -111,47 +110,59 @@ function showScreen(screenId) {
     }
 }
 
+// 1. PRESS TO START（1タップ目）➔ BGM開始 ＆ あそびかた表示
 function handleTitleTap() {
     audio.playSE('click');
     audio.startRandomBGM();
     showScreen('screen-how-to-play');
 }
 
+// 2. あそびかたの「次へ」タップ ➔ モード選択表示
+function goToModeSelect() {
+    audio.playSE('click');
+    showScreen('screen-mode-select');
+}
+
+// モード選択画面へ戻る
+function backToModeSelect() {
+    audio.playSE('click');
+    showScreen('screen-mode-select');
+}
+
+// ① 一人で遊ぶ
 function startSinglePlay() {
     audio.playSE('click');
-    audio.startRandomBGM();
     showScreen(null);
     startNewGame('single');
 }
 
+// ② フレンド対戦メニュー
 function openFriendBattleMenu() {
     audio.playSE('click');
     showScreen('screen-friend-menu');
 }
 
-function goToHowToPlay() {
-    audio.playSE('click');
-    showScreen('screen-how-to-play');
-}
-
+// ③ ランキング
 function showRankingBoard() {
     audio.playSE('click');
     renderRankingTable();
     showScreen('screen-ranking');
 }
 
-function returnToTitle() {
+// ④ 終了
+function exitGame() {
     audio.playSE('click');
-    showScreen('screen-title');
+    audio.stopBGM();
+    showScreen('screen-title'); // 最初に戻る
 }
 
-function cancelNetwork(target = 'screen-title') {
+function cancelNetwork(target = 'screen-mode-select') {
     audio.playSE('click');
     if (peer) { peer.destroy(); peer = null; }
     showScreen(target);
 }
 
-// --- ゲーム定数・変数 ---
+// --- ゲームロジック ---
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
@@ -169,11 +180,10 @@ let isDragging = false;
 let aimAngle = Math.PI / 2;
 let score = 0;
 let currentStage = 1;
-let bombCount = 2; // ステージあたり2個まで
-let gameMode = 'single'; // 'single' | 'battle'
+let bombCount = 2;
+let gameMode = 'single';
 let isGameOver = false;
 
-// スマホ画面サイズ調整
 function resizeCanvas() {
     const container = document.getElementById('game-container');
     canvas.width = container.clientWidth;
@@ -182,14 +192,12 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// グリッド初期化
 function initGrid() {
     grid = [];
     for (let r = 0; r < ROWS; r++) {
         grid[r] = [];
         for (let c = 0; c < COLS; c++) {
             if (r < 4) {
-                // 初期配置（上部4行）
                 const color = COLORS[Math.floor(Math.random() * COLORS.length)];
                 grid[r][c] = { color: color, type: 'normal' };
             } else {
@@ -200,7 +208,6 @@ function initGrid() {
 }
 
 function createRandomBubble() {
-    // 低確率で特殊バブル生成
     const rand = Math.random();
     if (rand < 0.05 && bombCount > 0) {
         return { color: '#ffcc00', type: 'bomb' };
@@ -223,7 +230,6 @@ function startNewGame(mode) {
     requestAnimationFrame(gameLoop);
 }
 
-// --- 操作イベント（スワイプ／タップ） ---
 canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
     if (bullet || isGameOver) return;
@@ -278,33 +284,27 @@ function shoot() {
     nextBubble = createRandomBubble();
 }
 
-// --- メイン更新＆描画ループ ---
 function gameLoop() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // グリッドオフセット（画面中央寄せ）
     const offsetX = (canvas.width - COLS * BUBBLE_DIAMETER) / 2;
     const offsetY = 40;
 
-    // 弾移動処理
     if (bullet) {
         bullet.x += bullet.vx;
         bullet.y += bullet.vy;
 
-        // 壁反射
         if (bullet.x - BUBBLE_RADIUS <= offsetX || bullet.x + BUBBLE_RADIUS >= offsetX + COLS * BUBBLE_DIAMETER) {
             bullet.vx *= -1;
             bullet.x = Math.max(offsetX + BUBBLE_RADIUS, Math.min(bullet.x, offsetX + COLS * BUBBLE_DIAMETER - BUBBLE_RADIUS));
         }
 
-        // 天井または他バブルとの衝突判定
         if (bullet.y - BUBBLE_RADIUS <= offsetY || checkCollision(bullet, offsetX, offsetY)) {
             snapToGrid(bullet, offsetX, offsetY);
             bullet = null;
         }
     }
 
-    // グリッドバブル描画
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
             const b = grid[r][c];
@@ -316,7 +316,6 @@ function gameLoop() {
         }
     }
 
-    // デッドライン描画
     const deadLineY = offsetY + (ROWS - 1) * BUBBLE_DIAMETER;
     ctx.strokeStyle = 'rgba(255, 50, 50, 0.6)';
     ctx.setLineDash([6, 6]);
@@ -326,7 +325,6 @@ function gameLoop() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // 照準線描画
     if (isDragging && !bullet) {
         const sx = canvas.width / 2;
         const sy = canvas.height - 70;
@@ -338,18 +336,9 @@ function gameLoop() {
         ctx.stroke();
     }
 
-    // 発射口・次回バブル描画
-    if (currentBubble) {
-        drawBubble(canvas.width / 2, canvas.height - 70, currentBubble);
-    }
-    if (nextBubble) {
-        drawBubble(canvas.width / 2 - 60, canvas.height - 70, nextBubble, 0.7);
-    }
-
-    // 飛行中の弾描画
-    if (bullet) {
-        drawBubble(bullet.x, bullet.y, bullet.bubble);
-    }
+    if (currentBubble) drawBubble(canvas.width / 2, canvas.height - 70, currentBubble);
+    if (nextBubble) drawBubble(canvas.width / 2 - 60, canvas.height - 70, nextBubble, 0.7);
+    if (bullet) drawBubble(bullet.x, bullet.y, bullet.bubble);
 
     if (!isGameOver) {
         requestAnimationFrame(gameLoop);
@@ -366,7 +355,6 @@ function drawBubble(x, y, bubble, scale = 1) {
     ctx.strokeStyle = 'rgba(255,255,255,0.4)';
     ctx.stroke();
 
-    // 特殊アイコン描画
     if (bubble.type === 'bomb') {
         ctx.fillStyle = '#000';
         ctx.font = `${12 * scale}px sans-serif`;
@@ -431,7 +419,6 @@ function explodeBomb(row, col) {
 }
 
 function triggerRainbow(row, col) {
-    // 隣接するバブルの色と同色を全消去
     let targetColor = null;
     const neighbors = [[-1,0],[1,0],[0,-1],[0,1]];
     for (let [dr, dc] of neighbors) {
@@ -495,24 +482,21 @@ function removeFloatingBubbles() {
         }
     }
 
-    // 最上行に繋がっているバブルから探査
     for (let c = 0; c < COLS; c++) {
         if (grid[0][c] && !visited[0][c]) dfs(0, c);
     }
 
-    // 探査から漏れた（浮いている）バブルを消去
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
             if (grid[r][c] && !visited[r][c]) {
                 grid[r][c] = null;
-                score += 200; // 落下ボーナス
+                score += 200;
             }
         }
     }
 }
 
 function checkGameOverOrClear() {
-    // クリア判定（バブルが全消しされたか）
     let hasBubbles = false;
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
@@ -526,7 +510,6 @@ function checkGameOverOrClear() {
         return;
     }
 
-    // デッドラインオーバー判定
     for (let c = 0; c < COLS; c++) {
         if (grid[ROWS - 1][c]) {
             isGameOver = true;
@@ -545,7 +528,7 @@ function nextStageAction() {
     requestAnimationFrame(gameLoop);
 }
 
-// --- PeerJS フレンド対戦通信処理 ---
+// --- 通信＆ランキング ---
 let peer = null;
 let conn = null;
 let hostBattleType = 'タイムアタック';
@@ -558,7 +541,7 @@ function setupRole(role) {
         document.getElementById('display-room-code').innerText = roomCode;
         showScreen('screen-host-wait');
 
-        peer = new Peer('bubble-puzzle-' + roomCode);
+        peer = new Peer('wing-game-' + roomCode);
         peer.on('connection', (c) => {
             conn = c;
             setupConnectionListeners();
@@ -585,9 +568,7 @@ function setHostTargetWins(wins) {
 
 function confirmHostBattleStart() {
     audio.playSE('click');
-    const ruleData = { type: 'rule', mode: hostBattleType, wins: hostTargetWins };
-    if (conn) conn.send(ruleData);
-
+    if (conn) conn.send({ type: 'rule', mode: hostBattleType, wins: hostTargetWins });
     const rulesText = `・モード: ${hostBattleType}<br>・勝利条件: ${hostTargetWins}本先取`;
     document.getElementById('rules-text-content').innerHTML = rulesText;
     showScreen('screen-battle-rules-desc');
@@ -599,7 +580,7 @@ function joinRoom() {
     if (code.length === 4) {
         peer = new Peer();
         peer.on('open', () => {
-            conn = peer.connect('bubble-puzzle-' + code);
+            conn = peer.connect('wing-game-' + code);
             setupConnectionListeners();
             showScreen('screen-guest-wait-rule');
         });
@@ -622,10 +603,9 @@ function readyToStartBattle() {
     startNewGame('battle');
 }
 
-// --- ランキングテーブル描画 ---
 function renderRankingTable() {
     const body = document.getElementById('ranking-list-body');
-    const records = JSON.parse(localStorage.getItem('bubble_puzzle_scores') || '[]');
+    const records = JSON.parse(localStorage.getItem('wing_game_scores') || '[]');
     if (records.length === 0) {
         body.innerHTML = '<tr><td colspan="5">データがありません</td></tr>';
         return;
@@ -639,9 +619,4 @@ function renderRankingTable() {
             <td>${r.score}</td>
         </tr>
     `).join('');
-}
-
-function closeSettings() {
-    audio.playSE('click');
-    showScreen('screen-title');
 }
