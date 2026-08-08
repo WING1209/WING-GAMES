@@ -130,7 +130,7 @@ let battleWinner = '';
 let attackNoticeText = "";
 let attackNoticeTimer = 0;
 let shakeTimer = 0;
-let isProcessingAttack = false; // お邪魔玉の多重発火を防ぐための安全ガードフラグ
+let isProcessingAttack = false; // お邪魔玉の多重発火を防ぐためのガードフラグ
 
 // タイマー関連（ソロモード）
 const STAGE_TIME_LIMIT = 150;
@@ -422,12 +422,12 @@ function sendAttackToOpponent(amount) {
     }
 }
 
-// 💥 お邪魔玉の大量発生・多重トリガーを完全に防ぐ安全設計関数
+// 💥 お邪魔玉の大量発生・多重トリガーを完全防止する安全設計関数
 function addOjamaBubbles(amount) {
     if (amount <= 0 || isProcessingAttack) return;
     isProcessingAttack = true;
 
-    // 安全のため上限を制限
+    // 安全のため上限を制限（万が一の過剰データにも対応）
     let safeAmount = Math.min(amount, 6);
 
     attackNoticeText = `⚠️ お邪魔玉 +${safeAmount} 到着！`;
@@ -436,6 +436,7 @@ function addOjamaBubbles(amount) {
     
     playSE(se.bombExplode);
 
+    // 受け取った数（safeAmount）の回数分だけ下へシフトし、最上段に1個ずつ追加
     for (let i = 0; i < safeAmount; i++) {
         for (let r = ROWS - 1; r > 0; r--) {
             let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
@@ -1127,6 +1128,7 @@ function snapBullet() {
                         grid[m.r][m.c] = null; score += 10;
                     }
                     let floatCount = removeFloating();
+                    // 消した数に応じた攻撃量（最大3個までに制限してバランスを保持）
                     let attackAmount = Math.min(Math.floor(matches.length / 3) + Math.floor(floatCount / 2), 3);
                     if (attackAmount > 0) sendAttackToOpponent(attackAmount);
                 }
@@ -1256,10 +1258,12 @@ function drawTitleBackground() {
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    // タイトル画面に追加された Ver 1.01 の描画処理
     ctx.save();
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
+    // スタート表示の少し下側に配置
     ctx.fillText("Ver 1.01", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
