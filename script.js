@@ -204,17 +204,20 @@ function initGridForStage(stage) {
         grid.push(row);
     }
 
-    let maxUnbreakable = Math.min(6, stage);
-    let placed = 0;
-    let attempts = 0;
-    while (placed < maxUnbreakable && attempts < 100) {
-        attempts++;
-        let r = Math.floor(Math.random() * 2);
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        let c = Math.floor(Math.random() * colsInRow);
-        if (grid[r][c] === null) {
-            grid[r][c] = UNBREAKABLE_COLOR;
-            placed++;
+    // 💡 フレンド対戦時は消せない玉（UNBREAKABLE_COLOR）を設置しない
+    if (gameMode !== 'battle') {
+        let maxUnbreakable = Math.min(6, stage);
+        let placed = 0;
+        let attempts = 0;
+        while (placed < maxUnbreakable && attempts < 100) {
+            attempts++;
+            let r = Math.floor(Math.random() * 2);
+            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+            let c = Math.floor(Math.random() * colsInRow);
+            if (grid[r][c] === null) {
+                grid[r][c] = UNBREAKABLE_COLOR;
+                placed++;
+            }
         }
     }
 
@@ -310,7 +313,6 @@ function setupConnectionListeners() {
         } else if (data.type === 'attack' && battleType === 'お邪魔対戦') {
             addOjamaBubbles(data.amount);
         } else if (data.type === 'round_loss') {
-            // 相手が敗北・全滅した通知を受けた（自分＝ラウンド勝者）
             myWins++;
             checkBattleSetEnd('YOU');
         } else if (data.type === 'rematch') {
@@ -413,29 +415,49 @@ function sendAttackToOpponent(amount) {
     }
 }
 
-// 💥 お邪魔玉生成（画面最上段へ押し込み・シフトしてせり出させる）
+// 💥 お邪魔玉の押し込み生成ロジック（通常のカラー玉を1つずつ上部から押し出す）
 function addOjamaBubbles(amount) {
     if (amount <= 0) return;
-    
-    let shiftRows = Math.ceil(amount / COLS);
-    
-    // 全体を下にシフト
-    for (let r = ROWS - 1; r >= shiftRows; r--) {
-        grid[r] = [...grid[r - shiftRows]];
-    }
 
-    // 上部にできた空行にランダム玉を挿入
-    let added = 0;
-    for (let r = 0; r < shiftRows; r++) {
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        grid[r] = [];
-        for (let c = 0; c < colsInRow; c++) {
-            if (added < amount) {
-                grid[r].push(getRandomGridColor());
-                added++;
-            } else {
-                grid[r].push(null);
+    for (let i = 0; i < amount; i++) {
+        // ランダムな列を選択
+        let c = Math.floor(Math.random() * COLS);
+        let newColor = getRandomGridColor();
+
+        // 列ごとに上から順に押し下げる（隙間があればそこまで押し込み、詰まっていれば全体を押し下げる）
+        // 0行目（最上段）に玉を挿入するため、下に空きマス（null）がある最深位置を探す
+        let emptyRow = -1;
+        for (let r = 0; r < ROWS; r++) {
+            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+            if (c >= colsInRow) continue; // 偶数段/奇数段の列数調整
+            if (grid[r][c] === null) {
+                emptyRow = r;
+                break;
             }
+        }
+
+        if (emptyRow !== -1) {
+            // 空きマス（隙間）までの既存の玉を1マスずつ下へ押し出す
+            for (let r = emptyRow; r > 0; r--) {
+                let prevCols = ((r - 1) % 2 === 0) ? COLS : COLS - 1;
+                if (c < prevCols) {
+                    grid[r][c] = grid[r - 1][c];
+                } else {
+                    grid[r][c] = null;
+                }
+            }
+            grid[0][c] = newColor;
+        } else {
+            // 列が完全に詰まっている場合は最下段から溢れる形にして1つ下げる
+            for (let r = ROWS - 1; r > 0; r--) {
+                let prevCols = ((r - 1) % 2 === 0) ? COLS : COLS - 1;
+                if (c < prevCols) {
+                    grid[r][c] = grid[r - 1][c];
+                } else {
+                    grid[r][c] = null;
+                }
+            }
+            grid[0][c] = newColor;
         }
     }
     checkGameOverCondition();
@@ -539,7 +561,6 @@ function triggerSoloGameOver(msg) {
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
 
-    // 最下段ライン（ROWS - 1）まで埋まったらゲームオーバー
     let limitRow = ROWS - 1; 
 
     for (let r = limitRow; r < ROWS; r++) {
@@ -948,7 +969,6 @@ function update() {
             bulletX += stepVX;
             bulletY += stepVY;
 
-            // 左右壁の判定（厳密化）
             if (bulletX - RADIUS <= 0) { 
                 bulletX = RADIUS; 
                 bulletVX *= -1; 
@@ -959,14 +979,12 @@ function update() {
                 stepVX *= -1;
             }
 
-            // 天井（最上部壁）判定
             if (bulletY - RADIUS <= TOP_MARGIN) {
                 bulletY = TOP_MARGIN + RADIUS;
                 snapBullet();
                 return;
             }
 
-            // 既存玉との衝突判定
             for (let r = 0; r < ROWS; r++) {
                 let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
                 for (let c = 0; c < colsInRow; c++) {
