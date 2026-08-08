@@ -82,7 +82,7 @@ let opponentWins = 0;
 
 let battleRole = ''; // 'host' | 'guest'
 let roomCode = '';
-let gameState = 'title'; // 'title' | 'how_to_play' | 'mode_select' | 'playing' ...
+let gameState = 'title';
 
 let shooterX = canvas.width / 2;
 let shooterY = canvas.height - 120;
@@ -123,7 +123,6 @@ let peer = null;
 let conn = null;
 const PEER_PREFIX = 'pb-game-room-2026-v2-';
 
-// --- 画面表示制御 ---
 function showScreen(screenId) {
     document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
     if (screenId === '') return;
@@ -134,35 +133,20 @@ function showScreen(screenId) {
             gameState = 'title';
             stopBGM();
             stopTimer();
-            // ロゴアニメーションの再再生
+            // ロゴアニメーション再再生用
             let logo = target.querySelector('.title-logo');
             if (logo) {
                 logo.style.animation = 'none';
                 logo.offsetHeight; /* trigger reflow */
-                logo.style.animation = 'dropTitle 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards';
+                logo.style.animation = null;
             }
-        } else if (screenId === 'screen-how-to-play') {
-            gameState = 'how_to_play';
-        } else if (screenId === 'screen-mode-select') {
-            gameState = 'mode_select';
         }
     }
 }
 
-// 画面遷移フロー
 function goToHowToPlay() {
     if (gameState === 'title') {
         showScreen('screen-how-to-play');
-    }
-}
-
-function goToModeSelect() {
-    showScreen('screen-mode-select');
-}
-
-function exitGame() {
-    if (confirm('ゲームを終了してタイトル画面に戻りますか？')) {
-        returnToTitle();
     }
 }
 
@@ -598,7 +582,7 @@ function requestRematch() {
     startNextRound();
 }
 
-// 🎉 勝利・全クリア時演出
+// 🎉 勝利・全クリア時（紙吹雪・花火）
 function initWinParticles() {
     particles = [];
     const colors = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda', '#ffffff', '#ffcc00'];
@@ -617,7 +601,7 @@ function initWinParticles() {
     }
 }
 
-// ☔ 敗北時演出
+// ☔ 敗北時（雨）
 function initLoseParticles() {
     particles = [];
     for (let i = 0; i < 100; i++) {
@@ -743,10 +727,7 @@ window.addEventListener('touchstart', (e) => {
 window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
 
 function handleInputStart(pos) {
-    if (gameState === 'title') {
-        goToHowToPlay();
-        return;
-    }
+    if (gameState === 'title') return;
 
     if (gameState === 'gameclear') {
         promptNameInput();
