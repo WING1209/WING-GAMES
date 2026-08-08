@@ -1,685 +1,1230 @@
-// ==========================================
-// 💡 基本設定＆グローバル変数
-// ==========================================
-const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
 
-// ゲームのサイズ定義
-const CANVAS_WIDTH = 380;
-const CANVAS_HEIGHT = 640;
-const BUBBLE_RADIUS = 16;
-const BUBBLE_DIAMETER = BUBBLE_RADIUS * 2;
-const ROW_HEIGHT = 28;
+// --- 🔊 サウンド（SE & BGM）設定 ---
+const audioPath = 'audio/';
 
-const GRID_ROWS = 14;
-const GRID_COLS = 8;
-const BOARD_OFFSET_Y = 50;
-
-// バブルの色の種類
-const BUBBLE_COLORS = ["#ff4d4d", "#4da6ff", "#4dff4d", "#ffcc00", "#cc66ff", "#ff9933"];
-
-// ゲーム状態変数
-let grid = [];
-let shooter = { x: CANVAS_WIDTH / 2, y: 580, angle: -Math.PI / 2 };
-let currentBubble = null;
-let nextBubble = null;
-let bullet = null;
-
-let score = 0;
-let stage = 1;
-let wins = 0;
-let opponentWins = 0;
-let targetWins = 1;
-
-let gameMode = 'single'; // 'single' | 'online'
-let currentBattleType = 'タイムアタック';
-let isHost = false;
-let isGameOver = false;
-let isGameClear = false;
-
-// 通信関連 (PeerJS)
-let peer = null;
-let conn = null;
-const PEER_PREFIX = "wing-bubble-pad-"; // ID重複防止用プレフィックス
-
-// ==========================================
-// 🎮 初期化 & ゲーム開始
-// ==========================================
-window.onload = function() {
-    initGrid();
-    setupControls();
-    loadCustomImages();
-    drawTitleBackground();
+const se = {
+    ballShoot:   new Audio(`${audioPath}se/se_ball_shoot.wav`),
+    ballLand:    new Audio(`${audioPath}se/se_ball_land.wav`),
+    bombExplode: new Audio(`${audioPath}se/se_bomb_explode.wav`),
+    rainbowLand: new Audio(`${audioPath}se/se_rainbow_land.wav`),
+    rainbowSet:  new Audio(`${audioPath}se/se_rainbow_set.wav`),
+    blockFall:   new Audio(`${audioPath}se/se_block_fall.wav`),
+    gameOver:    new Audio(`${audioPath}se/se_game_over.wav`),
+    stageClear:  new Audio(`${audioPath}se/se_stage_clear.wav`)
 };
 
-function initGrid() {
+function playSE(sound) {
+    try {
+        if (sound) {
+            sound.currentTime = 0;
+            let p = sound.play();
+            if (p !== undefined) p.catch(() => {});
+        }
+    } catch(e) {}
+}
+
+const bgmList = [
+    `${audioPath}bgm/bgm_play_01.mp3`,
+    `${audioPath}bgm/bgm_play_02.mp3`,
+    `${audioPath}bgm/bgm_play_03.mp3`,
+    `${audioPath}bgm/bgm_play_04.mp3`,
+    `${audioPath}bgm/bgm_play_05.mp3`
+];
+let currentBGM = null;
+
+function playRandomBGM() {
+    stopBGM();
+    try {
+        const randomIndex = Math.floor(Math.random() * bgmList.length);
+        currentBGM = new Audio(bgmList[randomIndex]);
+        currentBGM.loop = true;
+        let p = currentBGM.play();
+        if (p !== undefined) p.catch(() => {});
+    } catch(e) {}
+}
+
+function stopBGM() {
+    try {
+        if (currentBGM) {
+            currentBGM.pause();
+            currentBGM.currentTime = 0;
+            currentBGM = null;
+        }
+    } catch(e) {}
+}
+
+// --- 🎮 ゲーム基本パラメータ ---
+const ROWS = 12;
+const COLS = 8;
+const RADIUS = 19;
+const DIAMETER = RADIUS * 2;
+const ROW_HEIGHT = RADIUS * Math.sqrt(3);
+
+const BASE_COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
+const COLOR_NAMES = {
+    '#ff4d4d': '赤の玉', '#4da6ff': '青の玉', '#4dff4d': '緑の玉',
+    '#ffff4d': '黄色の玉', '#ff4dda': 'ピンクの玉', 'SPECIAL_BOMB': 'ボム玉(💣)'
+};
+let customImages = {};
+const UNBREAKABLE_COLOR = '#fff';
+const TOP_MARGIN = 80;
+
+let grid = [];
+let score = 0;
+let currentStage = 1;
+const maxStages = 10;
+
+let gameMode = 'single';
+let battleType = 'タイムアタック';
+let targetWins = 1;
+let myWins = 0;
+let opponentWins = 0;
+
+let battleRole = ''; // 'host' or 'guest'
+let roomCode = '';
+let gameState = 'title';
+
+let shooterX = canvas.width / 2;
+let shooterY = canvas.height - 120;
+let bulletX = shooterX;
+let bulletY = shooterY;
+let bulletVX = 0;
+let bulletVY = 0;
+
+const SPECIAL_RAINBOW = 'SPECIAL_RAINBOW';
+const SPECIAL_BOMB = 'SPECIAL_BOMB';
+
+let bulletColor = getRandomShooterColor();
+let nextColor = getRandomShooterColor();
+let bombUsesLeft = 2;
+
+// スマホ操作用
+let isDragging = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let pullX = 0;
+let pullY = 0;
+const MAX_PULL_DISTANCE = 110;
+const MIN_PULL_CANCEL = 25;
+const MIN_SPEED = 10;
+const MAX_SPEED = 24;
+let isMoving = false;
+
+let fallingBubbles = [];
+let flashingBubbles = [];
+let particles = [];
+let battleWinner = '';
+
+// ⏱️ 時間制限パラメータ（一人プレイ 300秒固定）
+const SINGLE_GAME_TIME_LIMIT = 300;
+let singleTimeRemaining = SINGLE_GAME_TIME_LIMIT;
+let lastTimerUpdate = 0;
+
+let peer = null;
+let conn = null;
+const PEER_PREFIX = 'pb-game-room-2026-';
+
+// 画面表示制御
+function showScreen(screenId) {
+    document.querySelectorAll('.overlay-screen').forEach(s => {
+        s.style.display = 'none';
+    });
+    if (screenId === '' || !screenId) {
+        return;
+    }
+    let target = document.getElementById(screenId);
+    if (target) {
+        target.style.display = 'flex';
+        if (screenId === 'screen-mode') {
+            gameState = 'title';
+            stopBGM();
+        }
+    }
+}
+
+function getRandomGridColor() {
+    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
+}
+
+function getRandomShooterColor() {
+    if (Math.random() < 0.08) return SPECIAL_RAINBOW;
+    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
+}
+
+function initGridForStage(stage) {
     grid = [];
-    for (let r = 0; r < GRID_ROWS; r++) {
-        grid[r] = [];
-        for (let c = 0; c < GRID_COLS; c++) {
-            grid[r][c] = null;
+    fallingBubbles = [];
+    flashingBubbles = [];
+
+    for (let r = 0; r < ROWS; r++) {
+        let row = [];
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) row.push(null);
+        grid.push(row);
+    }
+
+    let maxUnbreakable = Math.min(5, stage);
+    let placed = 0;
+    let attempts = 0;
+    while (placed < maxUnbreakable && attempts < 100) {
+        attempts++;
+        let r = Math.floor(Math.random() * 2);
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        let c = Math.floor(Math.random() * colsInRow);
+        if (grid[r][c] === null) {
+            grid[r][c] = UNBREAKABLE_COLOR;
+            placed++;
+        }
+    }
+
+    let maxAllowedRows = Math.min(6, 2 + Math.floor(stage * 0.4));
+    for (let r = 0; r < maxAllowedRows; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] === null && Math.random() < 0.75) {
+                grid[r][c] = getRandomGridColor();
+            }
         }
     }
 }
 
 function startSinglePlay() {
+    closeNetwork();
     gameMode = 'single';
-    stage = 1;
+    gameState = 'playing';
     score = 0;
-    hideAllScreens();
-    resetGameBoard();
-    createInitialBubbles(3 + stage);
-    requestAnimationFrame(gameLoop);
+    currentStage = 1;
+    bombUsesLeft = 2;
+    singleTimeRemaining = SINGLE_GAME_TIME_LIMIT;
+    lastTimerUpdate = Date.now();
+    initGridForStage(currentStage);
+    spawnBullet();
+    playRandomBGM();
+    showScreen('');
 }
 
-function resetGameBoard() {
-    initGrid();
-    isGameOver = false;
-    isGameClear = false;
-    bullet = null;
-    currentBubble = createRandomBubble();
-    nextBubble = createRandomBubble();
-}
-
-function createRandomBubble() {
-    const colorIndex = Math.floor(Math.random() * BUBBLE_COLORS.length);
-    return {
-        colorIndex: colorIndex,
-        color: BUBBLE_COLORS[colorIndex]
-    };
-}
-
-function createInitialBubbles(rows) {
-    for (let r = 0; r < rows; r++) {
-        const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (Math.random() > 0.15) {
-                grid[r][c] = createRandomBubble();
-            }
-        }
-    }
-}
-
-// ==========================================
-// 🕹️ 操作・コントロール
-// ==========================================
-function setupControls() {
-    let isAiming = false;
-
-    function handleAim(e) {
-        if (isGameOver || isGameClear || bullet) return;
-        const rect = canvas.getBoundingClientRect();
-        const touch = e.touches ? e.touches[0] : e;
-        const mouseX = touch.clientX - rect.left;
-        const mouseY = touch.clientY - rect.top;
-
-        let angle = Math.atan2(mouseY - shooter.y, mouseX - shooter.x);
-        if (angle > -Math.PI * 0.95 && angle < -Math.PI * 0.05) {
-            shooter.angle = angle;
-        }
-    }
-
-    function handleShoot() {
-        if (isGameOver || isGameClear || bullet || !currentBubble) return;
-        
-        bullet = {
-            x: shooter.x,
-            y: shooter.y,
-            vx: Math.cos(shooter.angle) * 12,
-            vy: Math.sin(shooter.angle) * 12,
-            colorIndex: currentBubble.colorIndex,
-            color: currentBubble.color
-        };
-
-        currentBubble = nextBubble;
-        nextBubble = createRandomBubble();
-    }
-
-    canvas.addEventListener('mousedown', (e) => { isAiming = true; handleAim(e); });
-    canvas.addEventListener('mousemove', (e) => { if (isAiming) handleAim(e); });
-    canvas.addEventListener('mouseup', () => { if (isAiming) { isAiming = false; handleShoot(); } });
-
-    canvas.addEventListener('touchstart', (e) => { isAiming = true; handleAim(e); }, {passive: true});
-    canvas.addEventListener('touchmove', (e) => { if (isAiming) handleAim(e); }, {passive: true});
-    canvas.addEventListener('touchend', () => { if (isAiming) { isAiming = false; handleShoot(); } });
-}
-
-// ==========================================
-// 🔄 ゲームメインループ
-// ==========================================
-function gameLoop() {
-    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-    drawBoard();
-    updateBullet();
-    drawShooter();
-
-    if (!isGameOver && !isGameClear) {
-        requestAnimationFrame(gameLoop);
-    }
-}
-
-function updateBullet() {
-    if (!bullet) return;
-
-    bullet.x += bullet.vx;
-    bullet.y += bullet.vy;
-
-    if (bullet.x - BUBBLE_RADIUS <= 0 || bullet.x + BUBBLE_RADIUS >= CANVAS_WIDTH) {
-        bullet.vx *= -1;
-        bullet.x = Math.max(BUBBLE_RADIUS, Math.min(CANVAS_WIDTH - BUBBLE_RADIUS, bullet.x));
-    }
-
-    if (bullet.y - BUBBLE_RADIUS <= BOARD_OFFSET_Y) {
-        snapBulletToGrid();
-        return;
-    }
-
-    for (let r = 0; r < GRID_ROWS; r++) {
-        const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c]) {
-                const pos = getBubbleCanvasPos(r, c);
-                const dist = Math.hypot(bullet.x - pos.x, bullet.y - pos.y);
-                if (dist < BUBBLE_DIAMETER - 2) {
-                    snapBulletToGrid();
-                    return;
-                }
-            }
-        }
-    }
-}
-
-function snapBulletToGrid() {
-    let bestR = 0, bestC = 0, minDist = Infinity;
-
-    for (let r = 0; r < GRID_ROWS; r++) {
-        const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (!grid[r][c]) {
-                const pos = getBubbleCanvasPos(r, c);
-                const dist = Math.hypot(bullet.x - pos.x, bullet.y - pos.y);
-                if (dist < minDist) {
-                    minDist = dist;
-                    bestR = r;
-                    bestC = c;
-                }
-            }
-        }
-    }
-
-    grid[bestR][bestC] = {
-        colorIndex: bullet.colorIndex,
-        color: bullet.color
-    };
-
-    const shotColorIndex = bullet.colorIndex;
-    bullet = null;
-
-    const matched = findMatches(bestR, bestC, shotColorIndex);
-    let poppedCount = 0;
-    let droppedCount = 0;
-
-    if (matched.length >= 3) {
-        poppedCount = matched.length;
-        matched.forEach(pos => {
-            grid[pos.r][pos.c] = null;
-        });
-
-        droppedCount = removeFloatingBubbles();
-        score += (poppedCount * 10) + (droppedCount * 20);
-
-        checkAndSendGarbage(poppedCount, droppedCount);
-    }
-
-    checkGameStatus();
-}
-
-// ==========================================
-// 🔥 お邪魔攻撃＆せり上げロジック
-// ==========================================
-function checkAndSendGarbage(poppedCount, droppedCount) {
-    if (gameMode !== 'online' || currentBattleType !== 'ラリー対戦') return;
-
-    let sendLines = 0;
-    if (droppedCount >= 3) sendLines = 1;
-    if (droppedCount >= 6) sendLines = 2;
-    if (droppedCount >= 10) sendLines = 3;
-    if (poppedCount >= 5) sendLines += 1;
-
-    if (sendLines > 0 && conn && conn.open) {
-        conn.send({
-            type: 'attack_garbage',
-            lines: sendLines
-        });
-    }
-}
-
-function receiveGarbageAttack(lines) {
-    for (let l = 0; l < lines; l++) {
-        pushBoardDownAndAddGarbageRow();
-    }
-    checkGameStatus();
-}
-
-function pushBoardDownAndAddGarbageRow() {
-    for (let r = GRID_ROWS - 1; r > 0; r--) {
-        grid[r] = [...grid[r - 1]];
-    }
-
-    grid[0] = [];
-    for (let c = 0; c < GRID_COLS; c++) {
-        if (Math.random() > 0.2) {
-            grid[0][c] = createRandomBubble();
-        } else {
-            grid[0][c] = null;
-        }
-    }
-}
-
-// ==========================================
-// 🔍 判定ロジック
-// ==========================================
-function getNeighbors(r, c) {
-    const isEven = (r % 2 === 0);
-    const offsets = isEven ? [
-        {r: -1, c: -1}, {r: -1, c: 0},
-        {r: 0, c: -1},  {r: 0, c: 1},
-        {r: 1, c: -1},  {r: 1, c: 0}
-    ] : [
-        {r: -1, c: 0},  {r: -1, c: 1},
-        {r: 0, c: -1},  {r: 0, c: 1},
-        {r: 1, c: 0},   {r: 1, c: 1}
-    ];
-
-    const neighbors = [];
-    offsets.forEach(o => {
-        const nr = r + o.r;
-        const nc = c + o.c;
-        const maxCols = (nr % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
-        if (nr >= 0 && nr < GRID_ROWS && nc >= 0 && nc < maxCols) {
-            neighbors.push({r: nr, c: nc});
-        }
-    });
-    return neighbors;
-}
-
-function findMatches(startR, startC, colorIndex) {
-    const matched = [];
-    const visited = Array.from({length: GRID_ROWS}, () => Array(GRID_COLS).fill(false));
-    const queue = [{r: startR, c: startC}];
-    visited[startR][startC] = true;
-
-    while (queue.length > 0) {
-        const curr = queue.shift();
-        matched.push(curr);
-
-        getNeighbors(curr.r, curr.c).forEach(n => {
-            if (!visited[n.r][n.c] && grid[n.r][n.c] && grid[n.r][n.c].colorIndex === colorIndex) {
-                visited[n.r][n.c] = true;
-                queue.push(n);
-            }
-        });
-    }
-    return matched;
-}
-
-function removeFloatingBubbles() {
-    const visited = Array.from({length: GRID_ROWS}, () => Array(GRID_COLS).fill(false));
-    const queue = [];
-
-    for (let c = 0; c < GRID_COLS; c++) {
-        if (grid[0][c]) {
-            queue.push({r: 0, c: c});
-            visited[0][c] = true;
-        }
-    }
-
-    while (queue.length > 0) {
-        const curr = queue.shift();
-        getNeighbors(curr.r, curr.c).forEach(n => {
-            if (!visited[n.r][n.c] && grid[n.r][n.c]) {
-                visited[n.r][n.c] = true;
-                queue.push(n);
-            }
-        });
-    }
-
-    let droppedCount = 0;
-    for (let r = 0; r < GRID_ROWS; r++) {
-        const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] && !visited[r][c]) {
-                grid[r][c] = null;
-                droppedCount++;
-            }
-        }
-    }
-    return droppedCount;
-}
-
-function checkGameStatus() {
-    let hasBubbles = false;
-
-    for (let c = 0; c < GRID_COLS; c++) {
-        if (grid[GRID_ROWS - 1][c] || grid[GRID_ROWS - 2][c]) {
-            isGameOver = true;
-            showGameOverScreen(false);
-            return;
-        }
-    }
-
-    for (let r = 0; r < GRID_ROWS; r++) {
-        const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c]) {
-                hasBubbles = true;
-                break;
-            }
-        }
-    }
-
-    if (!hasBubbles) {
-        isGameClear = true;
-        if (gameMode === 'single') {
-            showStageClearScreen();
-        } else {
-            showGameOverScreen(true);
-        }
-    }
-}
-
-// ==========================================
-// 🎨 描画処理
-// ==========================================
-function getBubbleCanvasPos(r, c) {
-    const isEven = (r % 2 === 0);
-    const xOffset = isEven ? BUBBLE_RADIUS + 14 : BUBBLE_RADIUS * 2 + 14;
-    const x = xOffset + c * BUBBLE_DIAMETER;
-    const y = BOARD_OFFSET_Y + r * ROW_HEIGHT + BUBBLE_RADIUS;
-    return {x, y};
-}
-
-function drawBoard() {
-    ctx.fillStyle = "#1a1a24";
-    ctx.fillRect(0, 0, CANVAS_WIDTH, BOARD_OFFSET_Y);
-    ctx.strokeStyle = "#ffcc00";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, BOARD_OFFSET_Y);
-    ctx.lineTo(CANVAS_WIDTH, BOARD_OFFSET_Y);
-    ctx.stroke();
-
-    ctx.fillStyle = "#ffcc00";
-    ctx.font = "bold 14px sans-serif";
-    ctx.fillText(`SCORE: ${score}`, 15, 30);
-
-    ctx.strokeStyle = "rgba(255, 77, 77, 0.5)";
-    ctx.setLineDash([6, 6]);
-    ctx.beginPath();
-    ctx.moveTo(0, 530);
-    ctx.lineTo(CANVAS_WIDTH, 530);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    for (let r = 0; r < GRID_ROWS; r++) {
-        const colsInRow = (r % 2 === 0) ? GRID_COLS : GRID_COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c]) {
-                const pos = getBubbleCanvasPos(r, c);
-                drawBubble(pos.x, pos.y, grid[r][c].colorIndex);
-            }
-        }
-    }
-
-    if (bullet) {
-        drawBubble(bullet.x, bullet.y, bullet.colorIndex);
-    }
-}
-
-function drawShooter() {
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(shooter.x, shooter.y);
-    ctx.lineTo(shooter.x + Math.cos(shooter.angle) * 120, shooter.y + Math.sin(shooter.angle) * 120);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    if (nextBubble) {
-        drawBubble(60, 580, nextBubble.colorIndex, 12);
-        ctx.fillStyle = "#aaa";
-        ctx.font = "10px sans-serif";
-        ctx.fillText("NEXT", 48, 605);
-    }
-
-    if (currentBubble && !bullet) {
-        drawBubble(shooter.x, shooter.y, currentBubble.colorIndex);
-    }
-}
-
-let customImages = [];
-function loadCustomImages() {
-    for (let i = 0; i < BUBBLE_COLORS.length; i++) {
-        customImages[i] = null;
-    }
-}
-
-function drawBubble(x, y, colorIndex, radius = BUBBLE_RADIUS) {
-    if (customImages[colorIndex]) {
-        ctx.drawImage(customImages[colorIndex], x - radius, y - radius, radius * 2, radius * 2);
-        return;
-    }
-
-    const grad = ctx.createRadialGradient(x - radius/3, y - radius/3, radius/4, x, y, radius);
-    grad.addColorStop(0, "#ffffff");
-    grad.addColorStop(0.3, BUBBLE_COLORS[colorIndex]);
-    grad.addColorStop(1, "#000000");
-
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = grad;
-    ctx.fill();
-    ctx.closePath();
-}
-
-function drawTitleBackground() {
-    ctx.fillStyle = "#11111a";
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-}
-
-// ==========================================
-// 🖥️ UI・画面切替処理
-// ==========================================
-function hideAllScreens() {
-    const screens = document.querySelectorAll('.overlay-screen');
-    screens.forEach(s => s.style.display = 'none');
-}
-
-function showScreen(screenId) {
-    hideAllScreens();
-    const target = document.getElementById(screenId);
-    if (target) target.style.display = 'flex';
-}
-
-function returnToTitle() {
-    cancelNetwork('screen-mode');
-    drawTitleBackground();
-}
-
-function showStageClearScreen() {
-    hideAllScreens();
-    document.getElementById('clear-score-text').innerText = `SCORE: ${score}`;
-    showScreen('screen-stage-clear');
-}
-
-function nextStageAction() {
-    stage++;
-    hideAllScreens();
-    resetGameBoard();
-    createInitialBubbles(Math.min(3 + stage, 8));
-    requestAnimationFrame(gameLoop);
-}
-
-function showGameOverScreen(isWin = false) {
-    hideAllScreens();
-    const title = document.getElementById('gameover-title-text');
-    const desc = document.getElementById('gameover-score-text');
-
-    if (gameMode === 'online') {
-        if (isWin) {
-            title.innerText = "YOU WIN! 🎉";
-            title.style.color = "#4dff4d";
-            wins++;
-        } else {
-            title.innerText = "YOU LOSE... 💀";
-            title.style.color = "#ff4d4d";
-            opponentWins++;
-        }
-        desc.innerText = `戦績: ${wins} 勝 - ${opponentWins} 敗`;
-    } else {
-        title.innerText = "GAME OVER";
-        title.style.color = "#ff4d4d";
-        desc.innerText = `FINAL SCORE: ${score}`;
-    }
-
-    showScreen('screen-game-over');
-}
-
-function handleGameOverNextAction() {
-    if (gameMode === 'single') {
-        startSinglePlay();
-    } else {
-        resetGameBoard();
-        hideAllScreens();
-        requestAnimationFrame(gameLoop);
-    }
-}
-
-// ==========================================
-// 🌐 ネットワーク対戦 (PeerJS通信強化版)
-// ==========================================
+// 🌐 PeerJS 通信処理
 function setupRole(role) {
-    isHost = (role === 'host');
-    if (peer) peer.destroy();
+    battleRole = role;
+    closeNetwork();
 
-    // 4桁コードの生成
-    const rawCode = Math.floor(1000 + Math.random() * 9000).toString();
-    const fullPeerId = PEER_PREFIX + rawCode;
+    if (role === 'host') {
+        roomCode = Math.floor(1000 + Math.random() * 9000).toString();
+        document.getElementById('display-room-code').innerText = roomCode;
+        showScreen('screen-host-wait');
 
-    if (isHost) {
-        peer = new Peer(fullPeerId);
+        peer = new Peer(PEER_PREFIX + roomCode);
+        peer.on('connection', (c) => {
+            conn = c;
+            setupConnectionListeners();
+            conn.on('open', () => {
+                showScreen('screen-host-rule-setup');
+            });
+        });
+        peer.on('error', () => {
+            alert('接続エラーが発生しました。もう一度試してください。');
+            showScreen('screen-role-select');
+        });
     } else {
-        peer = new Peer(); // ゲストはランダムIDでOK
+        showScreen('screen-guest-join');
+        document.getElementById('status-message').innerText = '';
     }
-
-    peer.on('open', (id) => {
-        if (isHost) {
-            document.getElementById('display-room-code').innerText = rawCode;
-            showScreen('screen-host-wait');
-        } else {
-            showScreen('screen-guest-join');
-        }
-    });
-
-    peer.on('connection', (c) => {
-        conn = c;
-        setupConnectionHandlers();
-        if (isHost) {
-            showScreen('screen-host-rule-setup');
-        }
-    });
-
-    peer.on('error', (err) => {
-        console.error('PeerJS Error:', err);
-        const statusEl = document.getElementById('status-message');
-        if (statusEl) statusEl.innerText = "通信エラーが発生しました。再試行してください。";
-    });
 }
 
 function joinRoom() {
-    const inputCode = document.getElementById('input-room-code').value.trim();
-    const statusEl = document.getElementById('status-message');
-
-    if (inputCode.length !== 4) {
-        if (statusEl) statusEl.innerText = "4桁の番号を入力してください";
+    let code = document.getElementById('input-room-code').value;
+    if (code.length !== 4) {
+        document.getElementById('status-message').innerText = '4桁の数字を入力してください';
         return;
     }
 
-    if (statusEl) statusEl.innerText = "接続中...";
+    roomCode = code;
+    document.getElementById('status-message').innerText = '接続中...';
+    closeNetwork();
+    peer = new Peer();
 
-    const targetPeerId = PEER_PREFIX + inputCode;
-    conn = peer.connect(targetPeerId);
-
-    conn.on('open', () => {
-        if (statusEl) statusEl.innerText = "";
-        setupConnectionHandlers();
-        showScreen('screen-guest-wait-rule');
+    peer.on('open', () => {
+        conn = peer.connect(PEER_PREFIX + roomCode);
+        setupConnectionListeners();
     });
-
-    conn.on('error', (err) => {
-        if (statusEl) statusEl.innerText = "部屋が見つかりませんでした。";
+    peer.on('error', () => {
+        document.getElementById('status-message').innerText = '部屋が見つからないか接続に失敗しました';
     });
 }
 
-function setupConnectionHandlers() {
+function setupConnectionListeners() {
+    conn.on('open', () => {
+        if (battleRole === 'guest') {
+            showScreen('screen-guest-wait-rule');
+        }
+    });
+
     conn.on('data', (data) => {
-        if (data.type === 'attack_garbage') {
-            receiveGarbageAttack(data.lines);
-        } else if (data.type === 'start_game') {
-            currentBattleType = data.battleType;
+        if (data.type === 'show_rule') {
             targetWins = data.targetWins;
-            gameMode = 'online';
-            hideAllScreens();
-            resetGameBoard();
-            createInitialBubbles(5);
-            requestAnimationFrame(gameLoop);
+            battleType = data.battleType;
+            showBattleRuleModal();
+        } else if (data.type === 'start_game') {
+            startBattleGame();
+        } else if (data.type === 'attack' && battleType === 'ラリー対戦') {
+            addOjamaBubbles(data.amount);
+        } else if (data.type === 'round_loss') {
+            myWins++;
+            checkBattleSetEnd('YOU');
+        } else if (data.type === 'next_round') {
+            startNextRound();
         }
     });
 
     conn.on('close', () => {
-        alert("対戦相手との通信が切断されました");
-        returnToTitle();
+        if (gameState === 'playing') {
+            alert('相手との通信が切断されました');
+            returnToTitle();
+        }
     });
 }
 
 function setHostBattleType(type) {
-    currentBattleType = type;
-    document.getElementById('btn-mode-ta').className = (type === 'タイムアタック') ? 'menu-btn sub' : 'menu-btn gray';
-    document.getElementById('btn-mode-rally').className = (type === 'ラリー対戦') ? 'menu-btn sub' : 'menu-btn gray';
+    battleType = type;
+    document.getElementById('btn-mode-ta').className = type === 'タイムアタック' ? 'menu-btn sub' : 'menu-btn gray';
+    document.getElementById('btn-mode-rally').className = type === 'ラリー対戦' ? 'menu-btn sub' : 'menu-btn gray';
 }
 
-function setHostTargetWins(count) {
-    targetWins = count;
-    document.getElementById('btn-win-1').className = (count === 1) ? 'menu-btn' : 'menu-btn gray';
-    document.getElementById('btn-win-2').className = (count === 2) ? 'menu-btn' : 'menu-btn gray';
+function setHostTargetWins(wins) {
+    targetWins = wins;
+    document.getElementById('btn-win-1').className = wins === 1 ? 'menu-btn' : 'menu-btn gray';
+    document.getElementById('btn-win-2').className = wins === 2 ? 'menu-btn' : 'menu-btn gray';
 }
 
 function confirmHostBattleStart() {
     if (conn && conn.open) {
         conn.send({
-            type: 'start_game',
-            battleType: currentBattleType,
-            targetWins: targetWins
+            type: 'show_rule',
+            targetWins: targetWins,
+            battleType: battleType
         });
+        showBattleRuleModal();
+    } else {
+        alert('ゲストとの通信が確立されていません');
     }
-
-    gameMode = 'online';
-    hideAllScreens();
-    resetGameBoard();
-    createInitialBubbles(5);
-    requestAnimationFrame(gameLoop);
 }
 
-function cancelNetwork(nextScreen) {
+function showBattleRuleModal() {
+    let modeText = battleType === 'タイムアタック' 
+        ? '⏱️ タイムアタック: 先にすべての玉を消せば勝利！'
+        : '🔥 ラリー対戦: 消えた＋落ちた玉が合計4個以上で相手におじゃま玉を送るぞ！';
+    
+    let winText = `🏆 勝敗条件: ${targetWins}回先に勝利した方の勝ち！`;
+
+    let ruleContainer = document.getElementById('battle-rule-desc');
+    if (ruleContainer) {
+        ruleContainer.innerHTML = `<p style="margin:8px 0; font-size:15px;">${modeText}</p><p style="margin:8px 0; color:#ffcc00; font-weight:bold; font-size:16px;">${winText}</p>`;
+    }
+
+    showScreen('screen-rule-confirm');
+
+    let startBtn = document.getElementById('btn-start-battle-now');
+    if (startBtn) {
+        if (battleRole === 'host') {
+            startBtn.style.display = 'inline-block';
+            startBtn.innerText = '対戦スタート！';
+            startBtn.onclick = () => {
+                if (conn && conn.open) {
+                    conn.send({ type: 'start_game' });
+                }
+                startBattleGame();
+            };
+        } else {
+            startBtn.style.display = 'block';
+            startBtn.innerText = 'ホストの開始を待っています...';
+            startBtn.onclick = null;
+        }
+    }
+}
+
+function closeNetwork() {
     if (conn) conn.close();
     if (peer) peer.destroy();
     conn = null;
     peer = null;
+}
+
+function cancelNetwork(nextScreen) {
+    closeNetwork();
     showScreen(nextScreen);
 }
 
-// UI補助関数
-function showRankingBoard() { showScreen('screen-ranking'); }
-function closeSettings() { document.getElementById('settings-overlay').style.display = 'none'; }
+function startBattleGame() {
+    gameMode = 'battle';
+    gameState = 'playing';
+    score = 0;
+    currentStage = 1;
+    bombUsesLeft = 2;
+    initGridForStage(currentStage);
+    spawnBullet();
+    playRandomBGM();
+    showScreen('');
+}
+
+function startNextRound() {
+    bombUsesLeft = 2;
+    initGridForStage(1);
+    spawnBullet();
+    gameState = 'playing';
+    showScreen('');
+}
+
+function sendAttackToOpponent(amount) {
+    if (conn && conn.open && gameMode === 'battle' && battleType === 'ラリー対戦') {
+        conn.send({ type: 'attack', amount: amount });
+    }
+}
+
+function addOjamaBubbles(amount) {
+    let emptyIndices = [];
+    for (let c = 0; c < COLS; c++) {
+        if (grid[0][c] === null) {
+            emptyIndices.push(c);
+        }
+    }
+
+    for (let i = emptyIndices.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [emptyIndices[i], emptyIndices[j]] = [emptyIndices[j], emptyIndices[i]];
+    }
+
+    let placeCount = Math.min(amount, emptyIndices.length);
+    for (let i = 0; i < placeCount; i++) {
+        let c = emptyIndices[i];
+        grid[0][c] = getRandomGridColor();
+    }
+}
+
+function nextStageAction() {
+    if (currentStage < maxStages) {
+        currentStage++;
+        bombUsesLeft = 2;
+        initGridForStage(currentStage);
+        spawnBullet();
+        gameState = 'playing';
+        showScreen('');
+    }
+}
+
+function triggerGameOverScreen(reasonText = "GAME OVER") {
+    playSE(se.gameOver);
+    stopBGM();
+    gameState = 'gameover_menu';
+    document.getElementById('gameover-title-text').innerText = reasonText;
+    document.getElementById('gameover-score-text').innerText = `到達ステージ: ${currentStage} / スコア: ${score}`;
+    showScreen('screen-game-over');
+}
+
+function handleGameOverNextAction() {
+    if (gameMode === 'single' && checkRankIn()) {
+        promptNameInput();
+    } else {
+        retryStage();
+    }
+}
+
+function retryStage() {
+    bombUsesLeft = 2;
+    singleTimeRemaining = SINGLE_GAME_TIME_LIMIT;
+    lastTimerUpdate = Date.now();
+    initGridForStage(currentStage);
+    spawnBullet();
+    gameState = 'playing';
+    playRandomBGM();
+    showScreen('');
+}
+
+function returnToTitle() {
+    closeNetwork();
+    stopBGM();
+    gameState = 'title';
+    showScreen('screen-mode');
+}
+
+function spawnBullet() {
+    bulletColor = nextColor;
+    nextColor = getRandomShooterColor();
+    if (bulletColor === SPECIAL_RAINBOW) playSE(se.rainbowSet);
+    resetBulletPos();
+    isMoving = false;
+}
+
+function resetBulletPos() {
+    bulletX = shooterX;
+    bulletY = shooterY;
+    bulletVX = 0;
+    bulletVY = 0;
+    pullX = 0;
+    pullY = 0;
+}
+
+function checkClearCondition() {
+    if (fallingBubbles.length > 0 || flashingBubbles.length > 0) return;
+
+    let hasBreakable = false;
+    for (let r = 0; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR) {
+                hasBreakable = true; break;
+            }
+        }
+        if (hasBreakable) break;
+    }
+
+    if (!hasBreakable) {
+        playSE(se.stageClear);
+        if (gameMode === 'battle') {
+            myWins++;
+            if (conn && conn.open) conn.send({ type: 'round_loss' });
+            checkBattleSetEnd('YOU');
+        } else {
+            if (currentStage < maxStages) {
+                gameState = 'stage_clear_menu';
+                document.getElementById('clear-score-text').innerText = `ステージ ${currentStage} クリア！ スコア: ${score}`;
+                showScreen('screen-stage-clear');
+            } else {
+                initParticles();
+                gameState = 'gameclear';
+                showScreen('');
+            }
+        }
+    }
+}
+
+function checkGameOverCondition() {
+    let deadLineRow = ROWS - 2;
+    for (let r = deadLineRow; r < ROWS; r++) {
+        let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let cc = 0; cc < rowCols; cc++) {
+            if (grid[r][cc] !== null) {
+                if (gameMode === 'battle') {
+                    playSE(se.gameOver);
+                    stopBGM();
+                    opponentWins++;
+                    if (conn && conn.open) conn.send({ type: 'round_loss' });
+                    checkBattleSetEnd('OPPONENT');
+                } else {
+                    triggerGameOverScreen("GAME OVER");
+                }
+                return;
+            }
+        }
+    }
+}
+
+function checkBattleSetEnd(roundWinner) {
+    if (myWins >= targetWins || opponentWins >= targetWins) {
+        let isIWin = myWins >= targetWins;
+        if (battleRole === 'host') {
+            battleWinner = isIWin ? '1P (HOST)' : '2P (GUEST)';
+        } else {
+            battleWinner = isIWin ? '2P (GUEST)' : '1P (HOST)';
+        }
+        gameState = 'battle_result';
+        stopBGM();
+        showScreen('');
+    } else {
+        alert(`ラウンド終了！ Winner: ${roundWinner}\n現在: あなた ${myWins}勝 - 相手 ${opponentWins}勝`);
+        if (battleRole === 'host' && conn && conn.open) {
+            conn.send({ type: 'next_round' });
+        }
+        startNextRound();
+    }
+}
+
+function initParticles() {
+    particles = [];
+    const colors = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda', '#ffffff', '#ffcc00'];
+    for (let i = 0; i < 120; i++) {
+        particles.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height - canvas.height,
+            size: Math.random() * 8 + 4,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            vx: (Math.random() - 0.5) * 4,
+            vy: Math.random() * 4 + 2,
+            rotation: Math.random() * 360,
+            vRot: (Math.random() - 0.5) * 10
+        });
+    }
+}
+
+function updateParticles() {
+    for (let p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.rotation += p.vRot;
+        if (p.y > canvas.height) {
+            p.y = -20;
+            p.x = Math.random() * canvas.width;
+        }
+    }
+}
+
+function drawParticles() {
+    for (let p of particles) {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate((p.rotation * Math.PI) / 180);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+        ctx.restore();
+    }
+}
+
+function getRankings() {
+    try {
+        return JSON.parse(localStorage.getItem('pb_rankings') || '[]');
+    } catch(e) { return []; }
+}
+
+function saveRanking(name, stageCount, scoreVal) {
+    let list = getRankings();
+    list.push({ name: name || 'NO NAME', stage: stageCount, score: scoreVal });
+    list.sort((a, b) => b.score - a.score || b.stage - a.stage);
+    list = list.slice(0, 5);
+    try {
+        localStorage.setItem('pb_rankings', JSON.stringify(list));
+    } catch(e) {}
+}
+
+function checkRankIn() {
+    let list = getRankings();
+    if (list.length < 5) return true;
+    let minScore = list[list.length - 1].score;
+    return score > minScore;
+}
+
+function promptNameInput() {
+    if (checkRankIn()) {
+        document.getElementById('rankin-desc-text').innerText = `クリアステージ数: ${currentStage - 1} / スコア: ${score}`;
+        showScreen('screen-name-input');
+    } else {
+        showRankingBoard();
+    }
+}
+
+function submitScoreAndShowRanking() {
+    let name = document.getElementById('player-name-input').value.trim();
+    saveRanking(name, currentStage - 1, score);
+    showRankingBoard();
+}
+
+function showRankingBoard() {
+    let list = getRankings();
+    let tbody = document.getElementById('ranking-list-body');
+    tbody.innerHTML = '';
+
+    if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="color:#888;">データがありません</td></tr>';
+    } else {
+        list.forEach((item, idx) => {
+            let tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="font-weight:bold; color:#ffcc00;">${idx + 1}位</td>
+                <td>${item.name}</td>
+                <td>${item.stage || 0} 面</td>
+                <td>${item.score}pt</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+    showScreen('screen-ranking');
+}
+
+function getTouchPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
+    let clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
+    let scaleX = canvas.width / rect.width;
+    let scaleY = canvas.height / rect.height;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+}
+
+window.addEventListener('touchstart', (e) => {
+    if (e.target === canvas) e.preventDefault();
+    handleInputStart(getTouchPos(e));
+}, { passive: false });
+
+window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
+
+function handleInputStart(pos) {
+    if (gameState === 'title') return;
+
+    if (gameState === 'gameclear') { promptNameInput(); return; }
+    if (gameState === 'battle_result') { returnToTitle(); return; }
+
+    if (gameState === 'playing' && !isMoving) {
+        if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
+            openSettings(); return;
+        }
+        if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
+            if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
+            return;
+        }
+
+        if (pos.y > TOP_MARGIN + 100) {
+            isDragging = true;
+            dragStartX = pos.x;
+            dragStartY = pos.y;
+            pullX = 0;
+            pullY = 0;
+        }
+    }
+}
+
+window.addEventListener('touchmove', (e) => {
+    if (!isDragging) return;
+    if (e.cancelable) e.preventDefault();
+    handleDragMove(getTouchPos(e));
+}, { passive: false });
+
+window.addEventListener('mousemove', (e) => { if (isDragging) handleDragMove(getTouchPos(e)); });
+
+function handleDragMove(pos) {
+    let dx = pos.x - dragStartX;
+    let dy = pos.y - dragStartY;
+    let dist = Math.hypot(dx, dy);
+
+    if (dist > MAX_PULL_DISTANCE) {
+        let angle = Math.atan2(dy, dx);
+        dx = Math.cos(angle) * MAX_PULL_DISTANCE;
+        dy = Math.sin(angle) * MAX_PULL_DISTANCE;
+    }
+    pullX = dx; 
+    pullY = dy;
+}
+
+window.addEventListener('touchend', (e) => { if (isDragging) { isDragging = false; releaseBullet(); } });
+window.addEventListener('mouseup', () => { if (isDragging) { isDragging = false; releaseBullet(); } });
+
+function releaseBullet() {
+    let pullDist = Math.hypot(pullX, pullY);
+
+    if (pullDist < MIN_PULL_CANCEL) {
+        pullX = 0; pullY = 0; return; 
+    }
+
+    if (pullY > 5) {
+        let power = Math.min(1.0, pullDist / MAX_PULL_DISTANCE);
+        let speed = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * power;
+        let launchAngle = Math.atan2(-pullY, -pullX);
+
+        if (launchAngle < -0.08 && launchAngle > -Math.PI + 0.08) {
+            bulletVX = Math.cos(launchAngle) * speed;
+            bulletVY = Math.sin(launchAngle) * speed;
+            isMoving = true;
+            playSE(se.ballShoot);
+        }
+    }
+
+    pullX = 0; pullY = 0;
+}
+
+function getPixelCoords(r, c) {
+    let offsetX = (r % 2 === 1) ? RADIUS : 0;
+    let x = c * DIAMETER + RADIUS + offsetX;
+    let y = r * ROW_HEIGHT + RADIUS + TOP_MARGIN;
+    return { x, y };
+}
+
+function findCellForPosition(x, y) {
+    let bestR = 0, bestC = 0, minDist = Infinity;
+    let startRow = (y <= TOP_MARGIN + RADIUS + 5) ? 0 : 0;
+    
+    for (let r = startRow; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            let pos = getPixelCoords(r, c);
+            let dist = Math.hypot(x - pos.x, y - pos.y);
+            if (dist < minDist) { minDist = dist; bestR = r; bestC = c; }
+        }
+    }
+    
+    if (grid[bestR][bestC] !== null) {
+        let altMinDist = Infinity, altR = bestR, altC = bestC;
+        for (let r = 0; r < ROWS; r++) {
+            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+            for (let c = 0; c < colsInRow; c++) {
+                if (grid[r][c] === null) {
+                    let pos = getPixelCoords(r, c);
+                    let dist = Math.hypot(x - pos.x, y - pos.y);
+                    if (dist < altMinDist) { altMinDist = dist; altR = r; altC = c; }
+                }
+            }
+        }
+        return { r: altR, c: altC };
+    }
+    return { r: bestR, c: bestC };
+}
+
+function findConnected(r, c, color, visited = new Set()) {
+    let key = `${r},${c}`;
+    if (visited.has(key) || r < 0 || r >= ROWS || c < 0) return [];
+    if (grid[r][c] !== color || grid[r][c] === UNBREAKABLE_COLOR) return [];
+
+    visited.add(key);
+    let matches = [{ r, c }];
+    let neighbors = (r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+    for (let n of neighbors) matches = matches.concat(findConnected(r + n[0], c + n[1], color, visited));
+    return matches;
+}
+
+function triggerFlashEffect(cellsToFlash, extraScore = 0) {
+    if (cellsToFlash.length === 0) return;
+    flashingBubbles.push({ cells: cellsToFlash, timer: 30 });
+    score += extraScore;
+}
+
+function removeFloating() {
+    let visited = new Set();
+    for (let c = 0; c < COLS; c++) {
+        if (grid[0][c] !== null) markConnectedFromCeiling(0, c, visited);
+    }
+
+    let droppedCount = 0;
+    for (let r = 0; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] !== null && !visited.has(`${r},${c}`)) {
+                let color = grid[r][c];
+                let pos = getPixelCoords(r, c);
+                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: color });
+                grid[r][c] = null;
+                droppedCount++;
+            }
+        }
+    }
+    if (droppedCount > 0) {
+        score += droppedCount * 20;
+        playSE(se.blockFall);
+    }
+    return droppedCount;
+}
+
+function markConnectedFromCeiling(r, c, visited) {
+    let key = `${r},${c}`;
+    let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+    if (visited.has(key) || r < 0 || r >= ROWS || c < 0 || c >= colsInRow) return;
+    if (grid[r][c] === null) return;
+    visited.add(key);
+    let neighbors = (r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+    for (let n of neighbors) markConnectedFromCeiling(r + n[0], c + n[1], visited);
+}
+
+function update() {
+    if (gameState === 'gameclear') {
+        updateParticles();
+        return;
+    }
+
+    if (gameState === 'playing' && gameMode === 'single') {
+        let now = Date.now();
+        if (now - lastTimerUpdate >= 1000) {
+            singleTimeRemaining--;
+            lastTimerUpdate = now;
+            if (singleTimeRemaining <= 0) {
+                singleTimeRemaining = 0;
+                triggerGameOverScreen("TIME UP!");
+                return;
+            }
+        }
+    }
+
+    for (let i = fallingBubbles.length - 1; i >= 0; i--) {
+        let fb = fallingBubbles[i];
+        fb.y += fb.vy; fb.vy += 0.6;
+        if (fb.y > canvas.height + 50) fallingBubbles.splice(i, 1);
+    }
+
+    for (let i = flashingBubbles.length - 1; i >= 0; i--) {
+        flashingBubbles[i].timer--;
+        if (flashingBubbles[i].timer <= 0) {
+            flashingBubbles.splice(i, 1);
+            let dropCount = removeFloating();
+            checkClearCondition();
+        }
+    }
+
+    if (fallingBubbles.length === 0 && flashingBubbles.length === 0 && gameState === 'playing') {
+        checkClearCondition();
+    }
+
+    if (gameState === 'playing' && isMoving) {
+        bulletX += bulletVX;
+        bulletY += bulletVY;
+
+        if (bulletX - RADIUS < 0) { 
+            bulletX = RADIUS; 
+            bulletVX *= -1; 
+        } else if (bulletX + RADIUS > canvas.width) { 
+            bulletX = canvas.width - RADIUS; 
+            bulletVX *= -1; 
+        }
+
+        if (bulletY - RADIUS <= TOP_MARGIN) {
+            bulletY = TOP_MARGIN + RADIUS;
+            snapBullet();
+            return;
+        }
+
+        for (let r = 0; r < ROWS; r++) {
+            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+            for (let c = 0; c < colsInRow; c++) {
+                if (grid[r][c] !== null) {
+                    let pos = getPixelCoords(r, c);
+                    if (Math.hypot(bulletX - pos.x, bulletY - pos.y) < DIAMETER - 3) {
+                        snapBullet();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+function snapBullet() {
+    isMoving = false;
+    let cell = findCellForPosition(bulletX, bulletY);
+
+    if (cell.r >= 0 && cell.r < ROWS) {
+        let colsInRow = (cell.r % 2 === 0) ? COLS : COLS - 1;
+        cell.c = Math.max(0, Math.min(colsInRow - 1, cell.c));
+
+        if (grid[cell.r][cell.c] === null) {
+            if (bulletColor === SPECIAL_BOMB) {
+                playSE(se.bombExplode);
+                let affectedCells = [{ r: cell.r, c: cell.c }];
+                let neighbors = (cell.r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+                for (let n of neighbors) {
+                    let nr = cell.r + n[0], nc = cell.c + n[1];
+                    let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
+                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc] !== UNBREAKABLE_COLOR) {
+                        affectedCells.push({ r: nr, c: nc });
+                    }
+                }
+                let flashList = [];
+                for (let ac of affectedCells) {
+                    if (grid[ac.r][ac.c] !== null && grid[ac.r][ac.c] !== UNBREAKABLE_COLOR) {
+                        flashList.push({ r: ac.r, c: ac.c });
+                        grid[ac.r][ac.c] = null;
+                    }
+                }
+                triggerFlashEffect(flashList, flashList.length * 40);
+                
+                if (flashList.length >= 4) {
+                    sendAttackToOpponent(flashList.length);
+                }
+            } else if (bulletColor === SPECIAL_RAINBOW) {
+                playSE(se.rainbowLand);
+                let targetColor = null;
+                let neighbors = (cell.r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
+                for (let n of neighbors) {
+                    let nr = cell.r + n[0], nc = cell.c + n[1];
+                    let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
+                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc] !== UNBREAKABLE_COLOR) {
+                        targetColor = grid[nr][nc]; break;
+                    }
+                }
+                if (targetColor !== null) {
+                    let clearedCount = 0;
+                    for (let r = 0; r < ROWS; r++) {
+                        let rCols = (r % 2 === 0) ? COLS : COLS - 1;
+                        for (let c = 0; c < rCols; c++) {
+                            if (grid[r][c] === targetColor) {
+                                let pos = getPixelCoords(r, c);
+                                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: targetColor });
+                                grid[r][c] = null; clearedCount++;
+                            }
+                        }
+                    }
+                    score += clearedCount * 30;
+                    let dropCount = removeFloating();
+                    let totalRemoved = clearedCount + dropCount;
+                    if (totalRemoved >= 4) {
+                        sendAttackToOpponent(totalRemoved);
+                    }
+                }
+            } else {
+                playSE(se.ballLand);
+                grid[cell.r][cell.c] = bulletColor;
+                let matches = findConnected(cell.r, cell.c, bulletColor);
+                if (matches.length >= 3) {
+                    for (let m of matches) {
+                        let pos = getPixelCoords(m.r, m.c);
+                        fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: bulletColor });
+                        grid[m.r][m.c] = null; score += 10;
+                    }
+                    
+                    let dropCount = removeFloating();
+                    let totalRemoved = matches.length + dropCount;
+
+                    if (totalRemoved >= 4) {
+                        sendAttackToOpponent(totalRemoved);
+                    }
+                }
+            }
+        }
+    }
+
+    spawnBullet();
+    checkClearCondition();
+    checkGameOverCondition();
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (gameState === 'title') { drawTitleBackground(); return; }
+    if (gameState === 'gameclear') { drawGameClearScreen(); return; }
+    if (gameState === 'battle_result') { drawBattleResultScreen(); return; }
+
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, canvas.width, TOP_MARGIN);
+    ctx.strokeStyle = "#444";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, TOP_MARGIN); ctx.lineTo(canvas.width, TOP_MARGIN); ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 12px sans-serif";
+    if (gameMode === 'battle') {
+        let roleName = battleRole === 'host' ? '1P(ホスト)' : '2P(ゲスト)';
+        ctx.fillText(`[${roleName}] 勝敗: ${myWins} - ${opponentWins}`, 12, 28);
+    } else {
+        ctx.fillText(`STAGE ${currentStage}/10`, 12, 22);
+        let timeColor = singleTimeRemaining <= 30 ? "#ff4d4d" : "#ffcc00";
+        ctx.fillStyle = timeColor;
+        ctx.fillText(`TIME: ${singleTimeRemaining}s`, 12, 40);
+        ctx.fillStyle = "#fff";
+    }
+    ctx.fillText(`SCORE: ${score}`, 12, 58);
+
+    ctx.fillStyle = "#aaa";
+    ctx.font = "bold 10px sans-serif";
+    ctx.fillText("NEXT", 118, 22);
+    drawBubble(130, 48, nextColor, 15);
+
+    let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
+    ctx.fillStyle = btnBg;
+    ctx.beginPath(); ctx.roundRect(165, 14, 125, 52, 10); ctx.fill();
+    ctx.strokeStyle = bombUsesLeft > 0 ? "#fff" : "#555"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
+
+    ctx.fillStyle = bombUsesLeft > 0 ? "#fff" : "#777";
+    ctx.font = "bold 14px sans-serif";
+    ctx.fillText(`💣ボム (${bombUsesLeft})`, 180, 45);
+
+    ctx.fillStyle = "#333";
+    ctx.beginPath(); ctx.roundRect(305, 14, 85, 52, 10); ctx.fill();
+    ctx.strokeStyle = "#888"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 13px sans-serif";
+    ctx.fillText("⚙️ 設定", 320, 45);
+
+    for (let r = 0; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] !== null) {
+                let pos = getPixelCoords(r, c);
+                if (grid[r][c] === UNBREAKABLE_COLOR) drawUnbreakableBubble(pos.x, pos.y, RADIUS);
+                else drawBubble(pos.x, pos.y, grid[r][c], RADIUS);
+            }
+        }
+    }
+
+    for (let fb of flashingBubbles) {
+        let phase = Math.floor(fb.timer / 10);
+        let flashColor = (phase === 1) ? "#ff0000" : "#ffffff";
+        for (let ac of fb.cells) {
+            let pos = getPixelCoords(ac.r, ac.c);
+            ctx.beginPath(); ctx.arc(pos.x, pos.y, RADIUS - 1, 0, Math.PI * 2);
+            ctx.fillStyle = flashColor; ctx.fill(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.stroke(); ctx.closePath();
+        }
+    }
+
+    for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS);
+
+    if (isDragging) {
+        let pullDist = Math.hypot(pullX, pullY);
+        if (pullDist >= MIN_PULL_CANCEL && pullY > 5) {
+            let launchAngle = Math.atan2(-pullY, -pullX);
+            let guideLength = 260;
+            ctx.beginPath(); ctx.moveTo(shooterX, shooterY);
+            ctx.lineTo(shooterX + Math.cos(launchAngle) * guideLength, shooterY + Math.sin(launchAngle) * guideLength);
+            ctx.strokeStyle = 'rgba(255, 204, 0, 0.95)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8]); ctx.stroke(); ctx.setLineDash([]); ctx.closePath();
+        }
+
+        if (pullY > 0) {
+            ctx.beginPath(); ctx.moveTo(shooterX, shooterY); ctx.lineTo(shooterX + pullX, shooterY + pullY);
+            ctx.strokeStyle = pullDist >= MIN_PULL_CANCEL ? '#ff4d4d' : '#888888'; 
+            ctx.lineWidth = 4; ctx.stroke(); ctx.closePath();
+        }
+        drawBubble(shooterX + pullX, shooterY + pullY, bulletColor, RADIUS);
+    } else if (isMoving) {
+        drawBubble(bulletX, bulletY, bulletColor, RADIUS);
+    } else {
+        drawBubble(shooterX, shooterY, bulletColor, RADIUS);
+    }
+}
+
+// ✨ タイトルの文字表示変更箇所
+function drawTitleBackground() {
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#ffcc00"; 
+    ctx.font = "bold 16px sans-serif"; 
+    ctx.fillText("○o WINGの暇つぶし o○", 15, 30);
+}
+
+function drawGameClearScreen() {
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    drawParticles();
+
+    ctx.save();
+    ctx.textAlign = "center";
+
+    ctx.font = "900 28px 'Segoe UI', sans-serif";
+    ctx.fillStyle = "#ff007f";
+    ctx.fillText("CONGRATULATIONS!", canvas.width / 2 + 3, canvas.height / 2 - 50 + 3);
+    ctx.fillStyle = "#ffcc00";
+    ctx.fillText("CONGRATULATIONS!", canvas.width / 2, canvas.height / 2 - 50);
+
+    ctx.font = "bold 20px sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(`ALL CLEAR!`, canvas.width / 2, canvas.height / 2 + 10);
+    ctx.fillText(`SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 45);
+
+    ctx.font = "14px sans-serif";
+    ctx.fillStyle = "#4da6ff";
+    ctx.fillText("画面をタップして次へ ➔", canvas.width / 2, canvas.height / 2 + 100);
+
+    ctx.restore();
+}
+
+function drawBattleResultScreen() {
+    ctx.fillStyle = "#111"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.textAlign = "center";
+
+    ctx.fillStyle = "#ffcc00"; 
+    ctx.font = "bold 32px sans-serif";
+    ctx.fillText(`${battleWinner} WIN!`, canvas.width / 2, canvas.height / 2 - 20);
+
+    ctx.fillStyle = "#ffffff"; 
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillText(`最終スコア: ${myWins} - ${opponentWins}`, canvas.width / 2, canvas.height / 2 + 30);
+
+    ctx.fillStyle = "#4da6ff"; 
+    ctx.font = "14px sans-serif"; 
+    ctx.fillText("画面をタップしてタイトルへ", canvas.width / 2, canvas.height / 2 + 80);
+    ctx.restore();
+}
+
+function drawBubble(x, y, color, r) {
+    if (customImages[color]) {
+        ctx.save();
+        ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.clip();
+        ctx.drawImage(customImages[color], x - r, y - r, r * 2, r * 2);
+        ctx.restore();
+        ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
+        return;
+    }
+    ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2);
+    if (color === SPECIAL_RAINBOW) {
+        let colorIndex = Math.floor(Date.now() / 150) % BASE_COLORS.length;
+        ctx.fillStyle = BASE_COLORS[colorIndex]; ctx.fill(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.stroke();
+        ctx.fillStyle = "#ffffff"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("★", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    } else if (color === SPECIAL_BOMB) {
+        ctx.fillStyle = "#333"; ctx.fill(); ctx.strokeStyle = "#ff5722"; ctx.lineWidth = 3; ctx.stroke();
+        ctx.fillStyle = "#ff5722"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("💣", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    } else {
+        ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+    }
+    ctx.closePath();
+}
+
+function drawUnbreakableBubble(x, y, r) {
+    ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.fillStyle = UNBREAKABLE_COLOR; ctx.fill();
+    ctx.strokeStyle = "#aaa"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
+    let offset = 6;
+    ctx.beginPath(); ctx.moveTo(x - offset, y - offset); ctx.lineTo(x + offset, y + offset);
+    ctx.moveTo(x + offset, y - offset); ctx.lineTo(x - offset, y + offset);
+    ctx.strokeStyle = "#ff3333"; ctx.lineWidth = 2.5; ctx.stroke(); ctx.closePath();
+}
+
+function openSettings() {
+    let listContainer = document.getElementById('settings-list');
+    listContainer.innerHTML = '';
+    [...BASE_COLORS, SPECIAL_BOMB].forEach(col => {
+        let rowDiv = document.createElement('div');
+        rowDiv.style.cssText = "display:flex; align-items:center; justify-content:space-between; width:92%; background:#222; padding:10px 12px; margin:6px 0; border-radius:8px;";
+
+        let nameSpan = document.createElement('span');
+        nameSpan.style.cssText = "font-size:13px; font-weight:bold;";
+        nameSpan.innerText = COLOR_NAMES[col] || col;
+
+        let btnGroup = document.createElement('div');
+        btnGroup.style.cssText = "display:flex; gap:8px;";
+
+        let uploadBtn = document.createElement('button');
+        uploadBtn.className = 'menu-btn sub';
+        uploadBtn.style.cssText = "padding:8px 12px; font-size:12px; width:auto; margin:0;";
+        uploadBtn.innerText = '📷 変更';
+
+        let resetBtn = document.createElement('button');
+        resetBtn.className = 'menu-btn danger';
+        resetBtn.style.cssText = "padding:8px 10px; font-size:12px; width:auto; margin:0;";
+        resetBtn.innerText = '🔄';
+        resetBtn.onclick = () => { delete customImages[col]; openSettings(); };
+
+        let fileInput = document.createElement('input');
+        fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.display = 'none';
+        fileInput.onchange = (e) => {
+            let file = e.target.files[0];
+            if (file) {
+                let reader = new FileReader();
+                reader.onload = (event) => {
+                    let img = new Image();
+                    img.onload = () => { customImages[col] = img; openSettings(); };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+        uploadBtn.onclick = () => fileInput.click();
+
+        btnGroup.appendChild(uploadBtn);
+        btnGroup.appendChild(resetBtn);
+
+        rowDiv.appendChild(nameSpan);
+        rowDiv.appendChild(btnGroup);
+        rowDiv.appendChild(fileInput);
+        listContainer.appendChild(rowDiv);
+    });
+    document.getElementById('settings-overlay').style.display = 'flex';
+}
+
+function closeSettings() {
+    document.getElementById('settings-overlay').style.display = 'none';
+}
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+showScreen('screen-mode');
+loop();
