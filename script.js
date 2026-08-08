@@ -25,30 +25,33 @@ function playSE(sound) {
     } catch(e) {}
 }
 
-const bgmList = [
+// 🎵 タイトル画面用ランダムBGMリスト
+const titleBgmList = [
     `${audioPath}bgm/bgm_play_01.mp3`,
     `${audioPath}bgm/bgm_play_03.mp3`,
     `${audioPath}bgm/bgm_play_04.mp3`
 ];
-let currentBGM = null;
+let currentTitleBGM = null;
 
-function playRandomBGM() {
-    stopBGM();
+// タイトルBGM再生
+function playTitleRandomBGM() {
+    stopTitleBGM();
     try {
-        const randomIndex = Math.floor(Math.random() * bgmList.length);
-        currentBGM = new Audio(bgmList[randomIndex]);
-        currentBGM.loop = true;
-        let p = currentBGM.play();
+        const randomIndex = Math.floor(Math.random() * titleBgmList.length);
+        currentTitleBGM = new Audio(titleBgmList[randomIndex]);
+        currentTitleBGM.loop = true;
+        let p = currentTitleBGM.play();
         if (p !== undefined) p.catch(() => {});
     } catch(e) {}
 }
 
-function stopBGM() {
+// タイトルBGM停止（各モード開始時に実行）
+function stopTitleBGM() {
     try {
-        if (currentBGM) {
-            currentBGM.pause();
-            currentBGM.currentTime = 0;
-            currentBGM = null;
+        if (currentTitleBGM) {
+            currentTitleBGM.pause();
+            currentTitleBGM.currentTime = 0;
+            currentTitleBGM = null;
         }
     } catch(e) {}
 }
@@ -74,13 +77,13 @@ let score = 0;
 let currentStage = 1;
 const maxStages = 10;
 
-let gameMode = 'single'; // 'single' | 'battle'
-let battleType = 'タイムアタック'; // 'タイムアタック' | 'お邪魔対戦'
+let gameMode = 'single';
+let battleType = 'タイムアタック';
 let targetWins = 1;
 let myWins = 0;
 let opponentWins = 0;
 
-let battleRole = ''; // 'host' | 'guest'
+let battleRole = '';
 let roomCode = '';
 let gameState = 'title';
 
@@ -113,7 +116,7 @@ let flashingBubbles = [];
 let particles = [];
 let battleWinner = '';
 
-// タイマー関連（ソロモード：1ステージ150秒スタート）
+// タイマー関連
 const STAGE_TIME_LIMIT = 150;
 let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
@@ -123,56 +126,85 @@ let peer = null;
 let conn = null;
 const PEER_PREFIX = 'pb-game-room-2026-v2-';
 
-function handleTitleBgmOnLogoSettled() {
-    if (gameState === 'title') {
-        playRandomBGM();
-    }
-}
-
+// 画面切り替え制御
 function showScreen(screenId) {
     document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
+    
+    if (screenId === 'screen-title') {
+        gameState = 'title';
+        stopTimer();
+        let target = document.getElementById('screen-title');
+        if (target) target.style.display = 'flex';
+
+        // ロゴアニメーション完了時（またはロゴ配置時）にBGM再生を開始
+        let logo = document.querySelector('.title-logo') || document.getElementById('title-logo-el');
+        if (logo) {
+            const onAnimationEnd = () => {
+                logo.removeEventListener('animationend', onAnimationEnd);
+                if (gameState === 'title') playTitleRandomBGM();
+            };
+            logo.addEventListener('animationend', onAnimationEnd);
+
+            // アニメーション CSS が設定されていない場合の安全フォールバック
+            setTimeout(() => {
+                if (gameState === 'title' && !currentTitleBGM) {
+                    playTitleRandomBGM();
+                }
+            }, 500);
+        } else {
+            playTitleRandomBGM();
+        }
+        return;
+    }
+
     if (screenId === '') return;
+
     let target = document.getElementById(screenId);
     if (target) {
         target.style.display = 'flex';
-        if (screenId === 'screen-title') {
-            gameState = 'title';
-            stopBGM();
-            stopTimer();
-            let logo = target.querySelector('.title-logo');
-            if (logo) {
-                logo.style.animation = 'none';
-                logo.offsetHeight; /* trigger reflow */
-                logo.style.animation = null;
-                
-                // アニメーション完了後にBGM再生（アニメーションが無効・即時定位置の場合は fallback で直接再生）
-                const onAnimationEnd = () => {
-                    logo.removeEventListener('animationend', onAnimationEnd);
-                    handleTitleBgmOnLogoSettled();
-                };
-                logo.addEventListener('animationend', onAnimationEnd);
-                
-                // 万が一 animationend が発火しない環境のためのフォールバック
-                setTimeout(() => {
-                    if (gameState === 'title' && !currentBGM) {
-                        handleTitleBgmOnLogoSettled();
-                    }
-                }, 1000);
-            } else {
-                handleTitleBgmOnLogoSettled();
-            }
-        } else {
-            // タイトル画面以外へ移る場合はタイトルBGMを停止
-            stopBGM();
-        }
     }
 }
 
+// 📖 遊び方説明（見やすいよう改行コード・レイアウトを修正）
 function goToHowToPlay() {
-    if (gameState === 'title') {
-        stopBGM();
-        showScreen('screen-how-to-play');
+    let container = document.getElementById('how-to-play-content') || document.getElementById('screen-how-to-play');
+    if (container) {
+        // コンテナ内にテキスト要素がなければ作成
+        let textEl = document.getElementById('how-to-play-text-el');
+        if (!textEl) {
+            textEl = document.createElement('div');
+            textEl.id = 'how-to-play-text-el';
+            textEl.style.cssText = "text-align: left; line-height: 1.6; font-size: 14px; padding: 10px; max-height: 350px; overflow-y: auto;";
+            
+            // 既存の「戻る」ボタン等を残しつつ挿入
+            let backBtn = container.querySelector('button');
+            if (backBtn) {
+                container.insertBefore(textEl, backBtn);
+            } else {
+                container.appendChild(textEl);
+            }
+        }
+        
+        textEl.innerHTML = `
+            <h3 style="text-align:center; margin-top:0; color:#ffcc00;">📖 あそびかた</h3>
+            <p><b>【基本操作】</b><br>
+            画面を引っ張って矢印を合わせ、指を離すとバブルが発射されます。</p>
+            
+            <p><b>【ルール】</b><br>
+            ・同じ色のバブルを<b>3つ以上</b>つなげると消すことができます。<br>
+            ・上のバブルを消して支えをなくすと、下にぶら下がっているバブルもまとめて落とせます。<br>
+            ・デッドライン（画面下部）までバブルが詰まるとゲームオーバーです。</p>
+
+            <p><b>【特殊バブル】</b><br>
+            ・<b>💣 ボム玉</b>：着弾すると周囲のバブルを爆破して消し去ります。（1ステージ2回まで使用可能）<br>
+            ・<b>★ レインボー</b>：着弾した隣のバブルと同じ色のバブルを画面全体からすべて消去します。</p>
+
+            <p><b>【対戦モード】</b><br>
+            ・<b>タイムアタック</b>：相手より先に画面上の消せるバブルを全消しした方の勝ちです。<br>
+            ・<b>お邪魔対戦</b>：バブルを消したり落としたりすると、相手の画面にお邪魔バブルを送り込めます！</p>
+        `;
     }
+    showScreen('screen-how-to-play');
 }
 
 function startTimer() {
@@ -242,9 +274,9 @@ function initGridForStage(stage) {
     }
 }
 
-// --- ソロモード開始 ---
+// 👤 一人であそぶ（ゲーム開始でタイトルBGM停止）
 function startSinglePlay() {
-    stopBGM();
+    stopTitleBGM();
     closeNetwork();
     gameMode = 'single';
     gameState = 'playing';
@@ -255,14 +287,12 @@ function startSinglePlay() {
     remainingTime = STAGE_TIME_LIMIT;
     initGridForStage(currentStage);
     spawnBullet();
-    playRandomBGM();
     startTimer();
     showScreen('');
 }
 
-// 🌐 ネットワーク & フレンド対戦フロー
+// ⚔️ 部屋作成/参加セットアップ
 function setupRole(role) {
-    stopBGM();
     battleRole = role;
     closeNetwork();
 
@@ -279,7 +309,7 @@ function setupRole(role) {
         });
         peer.on('error', () => {
             alert('接続エラーが発生しました');
-            showScreen('screen-role-select');
+            showScreen('screen-title');
         });
     } else {
         showScreen('screen-guest-join');
@@ -387,8 +417,9 @@ function readyToStartBattle() {
     executeBattleStart();
 }
 
+// 対戦モード開始（タイトルBGM停止）
 function executeBattleStart() {
-    stopBGM();
+    stopTitleBGM();
     gameMode = 'battle';
     gameState = 'playing';
     score = 0;
@@ -396,7 +427,6 @@ function executeBattleStart() {
     bombUsesLeft = 2;
     initGridForStage(currentStage);
     spawnBullet();
-    playRandomBGM();
     showScreen('');
 }
 
@@ -455,9 +485,7 @@ function nextStageAction() {
 
 function returnToTitle() {
     closeNetwork();
-    stopBGM();
     stopTimer();
-    gameState = 'title';
     showScreen('screen-title');
 }
 
@@ -514,16 +542,13 @@ function checkClearCondition() {
     }
 }
 
-// 🎯 ゲームオーバー処理（再挑戦なし・3秒後ランキング判定・遷移）
 function triggerSoloGameOver(msg) {
     stopTimer();
-    stopBGM();
     playSE(se.gameOver);
     gameState = 'gameover_menu';
     document.getElementById('gameover-score-text').innerText = `${msg}\nスコア: ${score}`;
     showScreen('screen-game-over');
 
-    // 3秒間表示後に判定へ移動
     setTimeout(() => {
         checkSoloGameOverRankIn();
     }, 3000);
@@ -532,7 +557,7 @@ function triggerSoloGameOver(msg) {
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
 
-    let limitRow = ROWS - 3; // デッドライン
+    let limitRow = ROWS - 3;
 
     for (let r = limitRow; r < ROWS; r++) {
         let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
@@ -540,7 +565,6 @@ function checkGameOverCondition() {
             if (grid[r][cc] !== null) {
                 if (gameMode === 'battle') {
                     playSE(se.gameOver);
-                    stopBGM();
                     opponentWins++;
                     if (conn && conn.open) conn.send({ type: 'round_loss' });
                     checkBattleSetEnd('OPPONENT');
@@ -569,7 +593,6 @@ function checkBattleSetEnd(roundWinner) {
     if (myWins >= targetWins || opponentWins >= targetWins) {
         battleWinner = myWins >= targetWins ? 'YOU' : 'OPPONENT';
         gameState = 'battle_result';
-        stopBGM();
         
         let titleEl = document.getElementById('battle-result-title');
         let subEl = document.getElementById('battle-result-sub');
