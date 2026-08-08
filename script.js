@@ -15,6 +15,18 @@ const se = {
     stageClear:  new Audio(`${audioPath}se/se_stage_clear.wav`)
 };
 
+let audioUnlocked = false;
+function unlockAudio() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    Object.values(se).forEach(sound => {
+        sound.play().then(() => {
+            sound.pause();
+            sound.currentTime = 0;
+        }).catch(() => {});
+    });
+}
+
 function playSE(sound) {
     try {
         if (sound) {
@@ -144,6 +156,7 @@ function showScreen(screenId) {
 }
 
 function goToHowToPlay() {
+    unlockAudio();
     if (gameState === 'title') {
         showScreen('screen-how-to-play');
     }
@@ -297,6 +310,7 @@ function setupConnectionListeners() {
         } else if (data.type === 'attack' && battleType === 'お邪魔対戦') {
             addOjamaBubbles(data.amount);
         } else if (data.type === 'round_loss') {
+            // 相手が敗北・全滅した通知を受けた（自分＝ラウンド勝者）
             myWins++;
             checkBattleSetEnd('YOU');
         } else if (data.type === 'rematch') {
@@ -365,6 +379,8 @@ function executeBattleStart() {
     score = 0;
     currentStage = 1;
     bombUsesLeft = 2;
+    myWins = 0;
+    opponentWins = 0;
     initGridForStage(currentStage);
     spawnBullet();
     playRandomBGM();
@@ -397,17 +413,43 @@ function sendAttackToOpponent(amount) {
     }
 }
 
+// 💥 お邪魔玉生成（画面最上段へ押し込み・シフトしてせり出させる）
 function addOjamaBubbles(amount) {
-    let count = 0;
-    for (let r = 0; r < ROWS && count < amount; r++) {
+    if (amount <= 0) return;
+    
+    let shiftRows = Math.ceil(amount / COLS);
+    
+    // 全体を下にシフト
+    for (let r = ROWS - 1; r >= shiftRows; r--) {
+        grid[r] = [...grid[r - shiftRows]];
+    }
+
+    // 上部にできた空行にランダム玉を挿入
+    let added = 0;
+    for (let r = 0; r < shiftRows; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let c = 0; c < colsInRow && count < amount; c++) {
-            if (grid[r][c] === null) {
-                grid[r][c] = getRandomGridColor();
-                count++;
+        grid[r] = [];
+        for (let c = 0; c < colsInRow; c++) {
+            if (added < amount) {
+                grid[r].push(getRandomGridColor());
+                added++;
+            } else {
+                grid[r].push(null);
             }
         }
     }
+    checkGameOverCondition();
+}
+
+function retryStage() {
+    bombUsesLeft = 2;
+    remainingTime = STAGE_TIME_LIMIT;
+    initGridForStage(currentStage);
+    spawnBullet();
+    gameState = 'playing';
+    playRandomBGM();
+    startTimer();
+    showScreen('');
 }
 
 function nextStageAction() {
@@ -485,7 +527,6 @@ function checkClearCondition() {
     }
 }
 
-// 🎯 ゲームオーバー処理（再挑戦なし・3秒後ランキング判定・遷移）
 function triggerSoloGameOver(msg) {
     stopTimer();
     stopBGM();
@@ -493,17 +534,13 @@ function triggerSoloGameOver(msg) {
     gameState = 'gameover_menu';
     document.getElementById('gameover-score-text').innerText = `${msg}\nスコア: ${score}`;
     showScreen('screen-game-over');
-
-    // 3秒間表示後に判定へ移動
-    setTimeout(() => {
-        checkSoloGameOverRankIn();
-    }, 3000);
 }
 
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
 
-    let limitRow = ROWS - 3; // デッドライン
+    // 最下段ライン（ROWS - 1）まで埋まったらゲームオーバー
+    let limitRow = ROWS - 1; 
 
     for (let r = limitRow; r < ROWS; r++) {
         let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
@@ -550,7 +587,7 @@ function checkBattleSetEnd(roundWinner) {
         if (battleWinner === 'YOU') {
             titleEl.innerText = "🏆 勝利！ WINNER!";
             titleEl.style.color = "#ffcc00";
-            subEl.innerText = `完全勝利達成！ (${myWins}勝 - ${opponentWins}勝)`;
+            subEl.innerText = `勝利達成！ (${myWins}勝 - ${opponentWins}勝)`;
             initWinParticles();
             loserControls.style.display = 'none';
             winnerWait.style.display = 'block';
@@ -565,7 +602,7 @@ function checkBattleSetEnd(roundWinner) {
 
         showScreen('screen-battle-result');
     } else {
-        alert(`ラウンド終了！ Winner: ${roundWinner}\n現在: あなた ${myWins}勝 - 相手 ${opponentWins}勝`);
+        alert(`ラウンド終了！ 判定: ${roundWinner === 'YOU' ? 'あなたの勝ち' : '相手の勝ち'}\n現在: あなた ${myWins}勝 - 相手 ${opponentWins}勝`);
         startNextRound();
     }
 }
@@ -715,11 +752,15 @@ function getTouchPos(e) {
 }
 
 window.addEventListener('touchstart', (e) => {
+    unlockAudio();
     if (gameState === 'playing') e.preventDefault();
     handleInputStart(getTouchPos(e));
 }, { passive: false });
 
-window.addEventListener('mousedown', (e) => handleInputStart(getTouchPos(e)));
+window.addEventListener('mousedown', (e) => {
+    unlockAudio();
+    handleInputStart(getTouchPos(e));
+});
 
 function handleInputStart(pos) {
     if (gameState === 'title') return;
@@ -897,27 +938,44 @@ function update() {
         checkClearCondition();
     }
 
+    // 壁・玉への当たり判定（高速移動時のすり抜け防止ステップ処理）
     if (gameState === 'playing' && isMoving) {
-        bulletX += bulletVX;
-        bulletY += bulletVY;
+        let steps = 4;
+        let stepVX = bulletVX / steps;
+        let stepVY = bulletVY / steps;
 
-        if (bulletX - RADIUS < 0) { bulletX = RADIUS; bulletVX *= -1; }
-        else if (bulletX + RADIUS > canvas.width) { bulletX = canvas.width - RADIUS; bulletVX *= -1; }
+        for (let s = 0; s < steps; s++) {
+            bulletX += stepVX;
+            bulletY += stepVY;
 
-        if (bulletY - RADIUS <= TOP_MARGIN) {
-            bulletY = TOP_MARGIN + RADIUS;
-            snapBullet();
-            return;
-        }
+            // 左右壁の判定（厳密化）
+            if (bulletX - RADIUS <= 0) { 
+                bulletX = RADIUS; 
+                bulletVX *= -1; 
+                stepVX *= -1;
+            } else if (bulletX + RADIUS >= canvas.width) { 
+                bulletX = canvas.width - RADIUS; 
+                bulletVX *= -1; 
+                stepVX *= -1;
+            }
 
-        for (let r = 0; r < ROWS; r++) {
-            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-            for (let c = 0; c < colsInRow; c++) {
-                if (grid[r][c] !== null) {
-                    let pos = getPixelCoords(r, c);
-                    if (Math.hypot(bulletX - pos.x, bulletY - pos.y) < DIAMETER - 3) {
-                        snapBullet();
-                        return;
+            // 天井（最上部壁）判定
+            if (bulletY - RADIUS <= TOP_MARGIN) {
+                bulletY = TOP_MARGIN + RADIUS;
+                snapBullet();
+                return;
+            }
+
+            // 既存玉との衝突判定
+            for (let r = 0; r < ROWS; r++) {
+                let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+                for (let c = 0; c < colsInRow; c++) {
+                    if (grid[r][c] !== null) {
+                        let pos = getPixelCoords(r, c);
+                        if (Math.hypot(bulletX - pos.x, bulletY - pos.y) <= DIAMETER - 2) {
+                            snapBullet();
+                            return;
+                        }
                     }
                 }
             }
