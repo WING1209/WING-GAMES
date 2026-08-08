@@ -66,8 +66,8 @@ function stopBGM() {
 }
 
 // --- 🎮 ゲーム基本パラメータ ---
-const ROWS = 12;
-const COLS = 8; // 最大列数 (偶数行: 8列, 奇数行: 7列)
+const ROWS = 15; // 縦長フィールドに拡張 (旧12 -> 15)
+const COLS = 8;  // 最大列数 (偶数行: 8列, 奇数行: 7列)
 const RADIUS = 19;
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3);
@@ -79,7 +79,7 @@ const COLOR_NAMES = {
 };
 let customImages = {};
 const UNBREAKABLE_COLOR = '#fff';
-const TOP_MARGIN = 80;
+const TOP_MARGIN = 15; // 画面上部の余白をスリム化
 
 let grid = [];
 let score = 0;
@@ -96,8 +96,8 @@ let battleRole = ''; // 'host' (1P) | 'guest' (2P)
 let roomCode = '';
 let gameState = 'title';
 
-let shooterX = canvas.width / 2;
-let shooterY = canvas.height - 120;
+let shooterX = 200; // フィールド中央(幅400の半分)
+let shooterY = canvas.height - 70;
 let bulletX = shooterX;
 let bulletY = shooterY;
 let bulletVX = 0;
@@ -126,6 +126,9 @@ let particles = [];
 let fireworks = [];
 let battleWinner = '';
 
+// --- 💥 飛来中のお邪魔玉アニメーション用配列 ---
+let flyingOjamaList = [];
+
 // --- 💥 お邪魔玉演出・制御用変数 ---
 let attackNoticeText = "";
 let attackNoticeTimer = 0;
@@ -133,7 +136,7 @@ let shakeTimer = 0;
 let isProcessingAttack = false;
 
 // タイマー関連（ソロモード）
-const STAGE_TIME_LIMIT = 150;
+const STAGE_TIME_LIMIT = 180; // 縦長化に伴い少し延長
 let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
 let totalClearTime = 0;
@@ -201,6 +204,7 @@ function initGridForStage(stage) {
     grid = [];
     fallingBubbles = [];
     flashingBubbles = [];
+    flyingOjamaList = [];
     isProcessingAttack = false;
     
     for (let r = 0; r < ROWS; r++) {
@@ -211,27 +215,27 @@ function initGridForStage(stage) {
     }
 
     if (gameMode !== 'battle') {
-        let maxUnbreakable = Math.min(6, stage);
+        let maxUnbreakable = Math.min(8, stage + 1);
         let placed = 0;
         let attempts = 0;
         while (placed < maxUnbreakable && attempts < 100) {
             attempts++;
-            let r = Math.floor(Math.random() * 2);
+            let r = Math.floor(Math.random() * 3);
             let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
             let c = Math.floor(Math.random() * colsInRow);
             if (grid[r][c] === null) {
-                grid[r][c] = UNBREAKABLE_COLOR;
+                grid[r][c] = { color: UNBREAKABLE_COLOR, isOjama: false };
                 placed++;
             }
         }
     }
 
-    let fillRows = Math.min(ROWS - 4, 2 + Math.floor(stage * 0.6));
+    let fillRows = Math.min(ROWS - 5, 2 + Math.floor(stage * 0.5));
     for (let r = 0; r < fillRows; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
             if (grid[r][c] === null && Math.random() < 0.7) {
-                grid[r][c] = getRandomGridColor();
+                grid[r][c] = { color: getRandomGridColor(), isOjama: false };
             }
         }
     }
@@ -308,7 +312,6 @@ function setupConnectionListeners() {
 
     conn.on('data', (data) => {
         if (battleRole === 'guest') {
-            // ゲストがホストから命令を受けるデータ受信
             if (data.type === 'show_rules') {
                 targetWins = data.targetWins;
                 battleType = data.battleType;
@@ -316,7 +319,7 @@ function setupConnectionListeners() {
             } else if (data.type === 'ready_start') {
                 executeBattleStart();
             } else if (data.type === 'sync_attack' && battleType === 'お邪魔対戦') {
-                applyOjamaBubblesDirect(data.amount);
+                launchOjamaProjectiles(data.amount);
             } else if (data.type === 'sync_round_end') {
                 myWins = data.myWins;
                 opponentWins = data.opponentWins;
@@ -327,12 +330,9 @@ function setupConnectionListeners() {
                 startNextRound();
             }
         } else {
-            // ホストがゲストからのアクションを受けるデータ受信
             if (data.type === 'guest_request_attack' && battleType === 'お邪魔対戦') {
-                // ホストがゲストの代わりに判定して全体にお邪魔を反映し、両者に同期する
                 triggerHostAttackSync(data.amount);
             } else if (data.type === 'guest_request_round_win') {
-                // ゲストが先にクリア/勝ちになった時、ホスト側で勝敗を決着させる
                 handleHostRoundDecide('OPPONENT');
             } else if (data.type === 'rematch') {
                 myWins = 0;
@@ -382,7 +382,8 @@ function displayBattleRulesDesc() {
                `・勝利条件: ${targetWins}勝先取`;
     } else {
         desc = `<b>【⚔️ お邪魔対戦】</b><br>` +
-               `玉を消すと相手に攻撃！お邪魔玉を送り込んで全滅させよう！<br><br>` +
+               `玉を消すと、消した個数分のお邪魔玉が相手の画面下から飛んできて付着！<br>` +
+               `（※お邪魔玉は同色でも3個以上で消えません）<br><br>` +
                `・勝利条件: 相手を全滅させるか先に全消し (${targetWins}勝先取)`;
     }
     document.getElementById('rules-text-content').innerHTML = desc;
@@ -437,16 +438,14 @@ function startNextRound() {
     showScreen('');
 }
 
-// 💥 お邪魔玉送信・同期機構（ホスト一元管理）
+// 💥 お邪魔玉送信・同期機構
 function requestAttackToOpponent(amount) {
     if (battleType !== 'お邪魔対戦' || amount <= 0) return;
     if (battleRole === 'host') {
-        // ホスト自身の攻撃：自分が受けるわけではないので、相手に送り込む
         if (conn && conn.open) {
             conn.send({ type: 'sync_attack', amount: amount });
         }
     } else {
-        // ゲストからの攻撃：ホストに依頼して同期してもらう
         if (conn && conn.open) {
             conn.send({ type: 'guest_request_attack', amount: amount });
         }
@@ -454,47 +453,65 @@ function requestAttackToOpponent(amount) {
 }
 
 function triggerHostAttackSync(amount) {
-    // ホストがお邪魔発生を受け取り、自分側の画面でお邪魔玉を加えつつゲストにも指示を飛ばす
-    applyOjamaBubblesDirect(amount);
+    launchOjamaProjectiles(amount);
     if (conn && conn.open) {
         conn.send({ type: 'sync_attack', amount: amount });
     }
 }
 
-function applyOjamaBubblesDirect(amount) {
-    if (amount <= 0 || isProcessingAttack) return;
-    isProcessingAttack = true;
+// 💥 画面下（画面外）からお邪魔玉が飛んでくる演出と着弾処理
+function launchOjamaProjectiles(amount) {
+    if (amount <= 0) return;
+    let safeAmount = Math.min(amount, 10);
 
-    let safeAmount = Math.min(amount, 6);
-
-    attackNoticeText = `⚠️ お邪魔玉 +${safeAmount} 到着！`;
+    attackNoticeText = `⚠️ お邪魔玉 +${safeAmount} 飛来中！`;
     attackNoticeTimer = 75; 
-    shakeTimer = Math.min(shakeTimer + 12, 30); 
-    
+    shakeTimer = Math.min(shakeTimer + 10, 30); 
     playSE(se.bombExplode);
 
     for (let i = 0; i < safeAmount; i++) {
-        for (let r = ROWS - 1; r > 0; r--) {
-            let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
-            let prevCols = ((r - 1) % 2 === 0) ? COLS : COLS - 1;
-            for (let c = 0; c < currentCols; c++) {
-                if (c < prevCols) {
-                    grid[r][c] = grid[r - 1][c];
-                } else {
-                    grid[r][c] = null;
-                }
+        setTimeout(() => {
+            let startX = Math.random() * 260 + 50;
+            let startY = canvas.height + 30;
+            let color = getRandomGridColor();
+            
+            flyingOjamaList.push({
+                x: startX,
+                y: startY,
+                targetY: canvas.height * 0.45,
+                color: color,
+                vy: -12 - Math.random() * 6
+            });
+        }, i * 120);
+    }
+}
+
+function applyOjamaToGrid(color) {
+    // 下部（ROWS-1）から上方向に向かって、空いている最も近いセルを探して定着させる
+    let placed = false;
+    for (let r = ROWS - 1; r >= 0; r--) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] === null) {
+                grid[r][c] = { color: color, isOjama: true };
+                placed = true;
+                break;
             }
         }
-        let chosenCol = Math.floor(Math.random() * COLS);
-        grid[0][chosenCol] = getRandomGridColor();
+        if (placed) break;
     }
-    
-    removeFloating();
+
+    // もしフィールドが完全に埋まってしまっている場合は一番上に無理やり押し込む
+    if (!placed) {
+        for (let c = 0; c < COLS; c++) {
+            if (grid[0][c] === null) {
+                grid[0][c] = { color: color, isOjama: true };
+                break;
+            }
+        }
+    }
+
     checkGameOverCondition();
-    
-    setTimeout(() => {
-        isProcessingAttack = false;
-    }, 150);
 }
 
 function retryStage() {
@@ -548,13 +565,14 @@ function resetBulletPos() {
 }
 
 function checkClearCondition() {
-    if (fallingBubbles.length > 0 || flashingBubbles.length > 0) return;
+    if (fallingBubbles.length > 0 || flashingBubbles.length > 0 || flyingOjamaList.length > 0) return;
 
     let hasBreakable = false;
     for (let r = 0; r < grid.length; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] !== null && grid[r][c] !== UNBREAKABLE_COLOR) {
+            let cell = grid[r][c];
+            if (cell !== null && cell.color !== UNBREAKABLE_COLOR) {
                 hasBreakable = true; break;
             }
         }
@@ -606,10 +624,8 @@ function checkGameOverCondition() {
                 if (gameMode === 'battle') {
                     stopBGM();
                     if (battleRole === 'host') {
-                        // ホスト自身が負け＝ゲストの勝ち
                         handleHostRoundDecide('OPPONENT');
                     } else {
-                        // ゲストが負けた場合、ホストにラウンド負け(ホスト勝ち)を要求
                         if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
                     }
                 } else {
@@ -621,7 +637,6 @@ function checkGameOverCondition() {
     }
 }
 
-// 👑 対戦の勝敗判定をホストが一元管理して同期する関数
 function handleHostRoundDecide(roundWinnerRole) {
     if (battleRole !== 'host' || (gameState !== 'playing' && gameState !== 'stage_clear_menu')) return;
 
@@ -638,8 +653,8 @@ function handleHostRoundDecide(roundWinnerRole) {
     if (conn && conn.open) {
         conn.send({
             type: 'sync_round_end',
-            myWins: opponentWins,     // 相手(ゲスト)から見たmyWins
-            opponentWins: myWins,     // 相手から見たopponentWins
+            myWins: opponentWins,
+            opponentWins: myWins,
             winner: roundWinnerRole
         });
     }
@@ -711,7 +726,7 @@ function initWinParticles() {
 }
 
 function spawnFirework() {
-    const x = Math.random() * (canvas.width - 100) + 50;
+    const x = Math.random() * (canvas.width - 120) + 50;
     const targetY = Math.random() * (canvas.height * 0.4) + 50;
     fireworks.push({
         x: x,
@@ -915,12 +930,17 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
-        if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
-            openSettings(); return;
-        }
-        if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
-            if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
-            return;
+        // 右側サイドパネルのボタン判定（X: 300 〜 395 付近）
+        if (pos.x >= 305 && pos.x <= 395) {
+            if (pos.y >= 310 && pos.y <= 385) {
+                // ボムボタン
+                if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
+                return;
+            } else if (pos.y >= 405 && pos.y <= 465) {
+                // 設定ボタン
+                openSettings();
+                return;
+            }
         }
 
         isDragging = true;
@@ -976,7 +996,6 @@ function getPixelCoords(r, c) {
     return { x, y };
 }
 
-// 🎯 【修正】右上のセル・壁際への正確なスナップ・当たり判定補正
 function findCellForPosition(x, y) {
     let bestR = 0, bestC = 0, minDist = Infinity;
     
@@ -993,7 +1012,6 @@ function findCellForPosition(x, y) {
         }
     }
 
-    // もし見つかった最寄りのセルにすでに玉がある場合、空いている最寄りセルを探す
     if (grid[bestR][bestC] !== null) {
         let altMinDist = Infinity, altR = bestR, altC = bestC;
         for (let r = 0; r < ROWS; r++) {
@@ -1015,11 +1033,14 @@ function findCellForPosition(x, y) {
     return { r: bestR, c: bestC };
 }
 
+// 🛡️ お邪魔玉（isOjama: true）は同色であっても消えないよう除外する判定
 function findConnected(r, c, color, visited = new Set()) {
     let key = `${r},${c}`;
     let colsInRow = (r >= 0 && r < ROWS) ? ((r % 2 === 0) ? COLS : COLS - 1) : 0;
     if (visited.has(key) || r < 0 || r >= ROWS || c < 0 || c >= colsInRow) return [];
-    if (grid[r][c] !== color || grid[r][c] === UNBREAKABLE_COLOR) return [];
+    
+    let cell = grid[r][c];
+    if (cell === null || cell.isOjama || cell.color === UNBREAKABLE_COLOR || cell.color !== color) return [];
 
     visited.add(key);
     let matches = [{ r, c }];
@@ -1044,8 +1065,9 @@ function removeFloating() {
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] !== null && !visited.has(`${r},${c}`)) {
-                let color = grid[r][c];
+            let cell = grid[r][c];
+            if (cell !== null && !visited.has(`${r},${c}`)) {
+                let color = cell.color;
                 let pos = getPixelCoords(r, c);
                 fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: color });
                 grid[r][c] = null;
@@ -1079,6 +1101,16 @@ function update() {
     if (attackNoticeTimer > 0) attackNoticeTimer--;
     if (shakeTimer > 0) shakeTimer--;
 
+    // 飛来中のお邪魔玉の更新処理
+    for (let i = flyingOjamaList.length - 1; i >= 0; i--) {
+        let oj = flyingOjamaList[i];
+        oj.y += oj.vy;
+        if (oj.y <= oj.targetY) {
+            applyOjamaToGrid(oj.color);
+            flyingOjamaList.splice(i, 1);
+        }
+    }
+
     for (let i = fallingBubbles.length - 1; i >= 0; i--) {
         let fb = fallingBubbles[i];
         fb.y += fb.vy; fb.vy += 0.6;
@@ -1094,7 +1126,7 @@ function update() {
         }
     }
 
-    if (fallingBubbles.length === 0 && flashingBubbles.length === 0 && gameState === 'playing') {
+    if (fallingBubbles.length === 0 && flashingBubbles.length === 0 && flyingOjamaList.length === 0 && gameState === 'playing') {
         checkClearCondition();
     }
 
@@ -1111,8 +1143,8 @@ function update() {
                 bulletX = RADIUS; 
                 bulletVX *= -1; 
                 stepVX *= -1;
-            } else if (bulletX + RADIUS >= canvas.width) { 
-                bulletX = canvas.width - RADIUS; 
+            } else if (bulletX + RADIUS >= 305) { // 右側サイドパネル(X:305〜)の壁で反射
+                bulletX = 305 - RADIUS; 
                 bulletVX *= -1; 
                 stepVX *= -1;
             }
@@ -1155,19 +1187,22 @@ function snapBullet() {
                 for (let n of neighbors) {
                     let nr = cell.r + n[0], nc = cell.c + n[1];
                     let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
-                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc] !== UNBREAKABLE_COLOR) {
+                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc].color !== UNBREAKABLE_COLOR) {
                         affectedCells.push({ r: nr, c: nc });
                     }
                 }
                 let flashList = [];
+                let totalRemovedCount = 0;
                 for (let ac of affectedCells) {
-                    if (grid[ac.r][ac.c] !== null && grid[ac.r][ac.c] !== UNBREAKABLE_COLOR) {
+                    let targetCell = grid[ac.r][ac.c];
+                    if (targetCell !== null && targetCell.color !== UNBREAKABLE_COLOR) {
                         flashList.push({ r: ac.r, c: ac.c });
                         grid[ac.r][ac.c] = null;
+                        totalRemovedCount++;
                     }
                 }
                 triggerFlashEffect(flashList, flashList.length * 40);
-                if (flashList.length > 0) requestAttackToOpponent(Math.min(flashList.length, 3));
+                if (totalRemovedCount > 0) requestAttackToOpponent(totalRemovedCount);
             } else if (bulletColor === SPECIAL_RAINBOW) {
                 playSE(se.rainbowLand);
                 let targetColor = null;
@@ -1175,8 +1210,8 @@ function snapBullet() {
                 for (let n of neighbors) {
                     let nr = cell.r + n[0], nc = cell.c + n[1];
                     let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
-                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc] !== UNBREAKABLE_COLOR) {
-                        targetColor = grid[nr][nc]; break;
+                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc].color !== UNBREAKABLE_COLOR && !grid[nr][nc].isOjama) {
+                        targetColor = grid[nr][nc].color; break;
                     }
                 }
                 if (targetColor !== null) {
@@ -1184,7 +1219,8 @@ function snapBullet() {
                     for (let r = 0; r < ROWS; r++) {
                         let rCols = (r % 2 === 0) ? COLS : COLS - 1;
                         for (let c = 0; c < rCols; c++) {
-                            if (grid[r][c] === targetColor) {
+                            let gCell = grid[r][c];
+                            if (gCell !== null && gCell.color === targetColor && !gCell.isOjama) {
                                 let pos = getPixelCoords(r, c);
                                 fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: targetColor });
                                 grid[r][c] = null; clearedCount++;
@@ -1193,11 +1229,12 @@ function snapBullet() {
                     }
                     score += clearedCount * 30;
                     let floatCount = removeFloating();
-                    requestAttackToOpponent(Math.min(clearedCount + floatCount, 4));
+                    let totalRemoved = clearedCount + floatCount;
+                    if (totalRemoved > 0) requestAttackToOpponent(totalRemoved);
                 }
             } else {
                 playSE(se.ballLand);
-                grid[cell.r][cell.c] = bulletColor;
+                grid[cell.r][cell.c] = { color: bulletColor, isOjama: false };
                 let matches = findConnected(cell.r, cell.c, bulletColor);
                 if (matches.length >= 3) {
                     for (let m of matches) {
@@ -1206,8 +1243,8 @@ function snapBullet() {
                         grid[m.r][m.c] = null; score += 10;
                     }
                     let floatCount = removeFloating();
-                    let attackAmount = Math.min(Math.floor(matches.length / 3) + Math.floor(floatCount / 2), 3);
-                    if (attackAmount > 0) requestAttackToOpponent(attackAmount);
+                    let totalRemoved = matches.length + floatCount;
+                    if (totalRemoved > 0) requestAttackToOpponent(totalRemoved);
                 }
             }
         }
@@ -1232,57 +1269,91 @@ function draw() {
         ctx.translate(offsetX, offsetY);
     }
 
-    ctx.fillStyle = "#111";
-    ctx.fillRect(0, 0, canvas.width, TOP_MARGIN);
+    // --- 🖥️ 右側サイドパネルの描画（UIをすべて右側に集約） ---
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(305, 0, 95, canvas.height);
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, TOP_MARGIN); ctx.lineTo(canvas.width, TOP_MARGIN); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(305, 0); ctx.lineTo(305, canvas.height); ctx.stroke();
 
+    // ステータス・モード・スコア（右側上部）
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 11px sans-serif";
+    if (gameMode === 'battle') {
+        let roleText = battleRole === 'host' ? '1P(H)' : '2P(G)';
+        ctx.fillText(`対戦[${roleText}]`, 312, 22);
+        ctx.fillText(` (${targetWins}勝先取)`, 312, 38);
+        ctx.fillStyle = "#ffcc00";
+        ctx.fillText(`${myWins}勝 - ${opponentWins}勝`, 312, 56);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(`${battleType}`, 312, 74);
+    } else {
+        ctx.fillStyle = "#ffcc00";
+        ctx.fillText(`ST ${currentStage}/10`, 312, 25);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(`TIME: ${remainingTime}s`, 312, 45);
+    }
+    ctx.fillStyle = "#4da6ff";
+    ctx.font = "bold 11px sans-serif";
+    ctx.fillText(`SCORE:`, 312, 98);
     ctx.fillStyle = "#fff";
     ctx.font = "bold 12px sans-serif";
-    if (gameMode === 'battle') {
-        let roleText = battleRole === 'host' ? '1P (HOST)' : '2P (GUEST)';
-        ctx.fillText(`対戦[${roleText}] (${targetWins}勝先取): ${myWins} - ${opponentWins}`, 12, 24);
-        ctx.fillText(`モード: ${battleType}`, 12, 42);
-    } else {
-        ctx.fillText(`STAGE ${currentStage}/10`, 12, 24);
-        ctx.fillText(`TIME: ${remainingTime}s`, 12, 42);
-    }
-    ctx.fillText(`SCORE: ${score}`, 12, 60);
+    ctx.fillText(`${score}`, 312, 116);
 
+    // NEXT表示
     ctx.fillStyle = "#aaa";
-    ctx.font = "bold 10px sans-serif";
-    ctx.fillText("NEXT", 118, 22);
-    drawBubble(130, 48, nextColor, 15);
+    ctx.font = "bold 11px sans-serif";
+    ctx.fillText("NEXT", 336, 162);
+    drawBubble(352, 202, nextColor, 17);
 
+    // ボム玉ボタン
     let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
     ctx.fillStyle = btnBg;
-    ctx.beginPath(); ctx.roundRect(165, 14, 125, 52, 10); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(312, 310, 80, 75, 10); ctx.fill();
     ctx.strokeStyle = bombUsesLeft > 0 ? "#fff" : "#555"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
 
     ctx.fillStyle = bombUsesLeft > 0 ? "#fff" : "#777";
-    ctx.font = "bold 14px sans-serif";
-    ctx.fillText(`💣ボム (${bombUsesLeft})`, 180, 45);
+    ctx.font = "bold 12px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("💣ボム", 352, 342);
+    ctx.fillText(`(${bombUsesLeft})`, 352, 364);
 
+    // 設定ボタン
     ctx.fillStyle = "#333";
-    ctx.beginPath(); ctx.roundRect(305, 14, 85, 52, 10); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(312, 405, 80, 60, 10); ctx.fill();
     ctx.strokeStyle = "#888"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
 
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 13px sans-serif";
-    ctx.fillText("⚙️ 設定", 320, 45);
+    ctx.font = "bold 12px sans-serif";
+    ctx.fillText("⚙️ 設定", 352, 440);
+    ctx.textAlign = "left";
 
+    // --- 🟢 グリッド玉の描画 ---
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] !== null) {
+            let cell = grid[r][c];
+            if (cell !== null) {
                 let pos = getPixelCoords(r, c);
-                if (grid[r][c] === UNBREAKABLE_COLOR) drawUnbreakableBubble(pos.x, pos.y, RADIUS);
-                else drawBubble(pos.x, pos.y, grid[r][c], RADIUS);
+                if (cell.color === UNBREAKABLE_COLOR) drawUnbreakableBubble(pos.x, pos.y, RADIUS);
+                else {
+                    drawBubble(pos.x, pos.y, cell.color, RADIUS);
+                    // お邪魔玉の場合は中央に分かりやすいマークを表示
+                    if (cell.isOjama) {
+                        ctx.fillStyle = "#ff3333";
+                        ctx.font = "bold 11px sans-serif";
+                        ctx.textAlign = "center";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText("×", pos.x, pos.y);
+                        ctx.textAlign = "left";
+                        ctx.textBaseline = "alphabetic";
+                    }
+                }
             }
         }
     }
 
+    // 点滅アニメーション玉
     for (let fb of flashingBubbles) {
         let phase = Math.floor(fb.timer / 10);
         let flashColor = (phase === 1) ? "#ff0000" : "#ffffff";
@@ -1293,13 +1364,27 @@ function draw() {
         }
     }
 
+    // 落下中の玉
     for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS);
 
+    // 飛来中のお邪魔玉
+    for (let oj of flyingOjamaList) {
+        drawBubble(oj.x, oj.y, oj.color, RADIUS);
+        ctx.fillStyle = "#ff3333";
+        ctx.font = "bold 11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("×", oj.x, oj.y);
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+    }
+
+    // 発射コントロール（引っ張り・シュート）
     if (isDragging) {
         let pullDist = Math.hypot(pullX, pullY);
         if (pullDist > 8) {
             let launchAngle = Math.atan2(-pullY, -pullX);
-            let guideLength = 220;
+            let guideLength = 250;
             ctx.beginPath(); ctx.moveTo(shooterX, shooterY);
             ctx.lineTo(shooterX + Math.cos(launchAngle) * guideLength, shooterY + Math.sin(launchAngle) * guideLength);
             ctx.strokeStyle = 'rgba(255, 204, 0, 0.95)'; ctx.lineWidth = 4; ctx.setLineDash([10, 8]); ctx.stroke(); ctx.setLineDash([]); ctx.closePath();
@@ -1316,15 +1401,15 @@ function draw() {
     if (attackNoticeTimer > 0) {
         ctx.save();
         ctx.fillStyle = "rgba(255, 0, 0, 0.85)";
-        ctx.fillRect(10, canvas.height / 2 - 30, canvas.width - 20, 50);
+        ctx.fillRect(10, canvas.height / 2 - 30, 285, 50);
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 3;
-        ctx.strokeRect(10, canvas.height / 2 - 30, canvas.width - 20, 50);
+        ctx.strokeRect(10, canvas.height / 2 - 30, 285, 50);
 
         ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 16px sans-serif";
+        ctx.font = "bold 14px sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(attackNoticeText, canvas.width / 2, canvas.height / 2 + 2);
+        ctx.fillText(attackNoticeText, 152, canvas.height / 2 + 2);
         ctx.restore();
     }
 
@@ -1410,7 +1495,6 @@ function drawUnbreakableBubble(x, y, r) {
     ctx.strokeStyle = "#ff3333"; ctx.lineWidth = 2.5; ctx.stroke(); ctx.closePath();
 }
 
-// 🖼️ 【修正】画像カスタム時のリサイズ（軽量化・メモリ圧迫防止）処理追加
 function openSettings() {
     let listContainer = document.getElementById('settings-list');
     listContainer.innerHTML = '';
