@@ -204,7 +204,6 @@ function initGridForStage(stage) {
         grid.push(row);
     }
 
-    // フレンド対戦時は消せない玉（UNBREAKABLE_COLOR）を設置しない
     if (gameMode !== 'battle') {
         let maxUnbreakable = Math.min(6, stage);
         let placed = 0;
@@ -415,36 +414,36 @@ function sendAttackToOpponent(amount) {
     }
 }
 
-// 💥 お邪魔玉の最上部押し込み生成ロジック（修正版）
+// 💥 お邪魔玉の発生ロジック（修正版：ランダムな列に確実分散挿入）
 function addOjamaBubbles(amount) {
     if (amount <= 0) return;
 
     for (let i = 0; i < amount; i++) {
-        // ランダムな列（0〜COLS-1）を選択
-        let c = Math.floor(Math.random() * COLS);
         let newColor = getRandomGridColor();
 
-        // 該当列の玉を「最下段から順に1マスずつ下へ押し出す」
-        // これにより、最上段（0行目）に新しい玉が押し込まれ、既存の玉が自然に1マスずつ下に下がります
-        for (let r = ROWS - 1; r > 0; r--) {
-            // 偶数行・奇数行の列幅差に配慮
-            let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
-            let prevCols = ((r - 1) % 2 === 0) ? COLS : COLS - 1;
-
-            if (c < currentCols) {
-                if (c < prevCols) {
-                    grid[r][c] = grid[r - 1][c];
-                } else {
-                    grid[r][c] = null;
-                }
-            }
+        // 0行目（最上段）の空いている列を検索
+        let emptyColsInTopRow = [];
+        for (let c = 0; c < COLS; c++) {
+            if (grid[0][c] === null) emptyColsInTopRow.push(c);
         }
 
-        // 最上部（0行目）に新しいランダムカラーの玉を設置
-        grid[0][c] = newColor;
+        if (emptyColsInTopRow.length > 0) {
+            // 空きがあればランダムな空き列に設置
+            let chosenCol = emptyColsInTopRow[Math.floor(Math.random() * emptyColsInTopRow.length)];
+            grid[0][chosenCol] = newColor;
+        } else {
+            // 最上段が全て埋まっている場合のみ、1列選んで下方向へ押し出す
+            let targetCol = Math.floor(Math.random() * COLS);
+            for (let r = ROWS - 1; r > 0; r--) {
+                let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
+                if (targetCol < currentCols) {
+                    grid[r][targetCol] = grid[r - 1][targetCol];
+                }
+            }
+            grid[0][targetCol] = newColor;
+        }
     }
     
-    // 押し出された結果、浮いた状態になった玉の脱落処理やゲームオーバー判定
     removeFloating();
     checkGameOverCondition();
 }
