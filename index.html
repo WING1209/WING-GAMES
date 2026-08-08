@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>パズルバブル (Puzzle Bubble)</title>
+    <title>バブルパズル</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         * {
@@ -22,10 +22,9 @@
             overflow: hidden;
             background-color: #000000;
             color: #ffffff;
-            position: fixed; /* スマホのスクロール・バウンス防止 */
+            position: fixed;
         }
 
-        /* スマホ画面いっぱいに広がるゲームコンテナ */
         #game-container {
             position: relative;
             width: 100vw;
@@ -43,7 +42,7 @@
             object-fit: contain;
         }
 
-        /* オーバーレイ画面共通（スマホ全画面対応） */
+        /* オーバーレイ画面 */
         .overlay-screen {
             position: absolute;
             top: 0;
@@ -64,18 +63,40 @@
             display: flex !important;
         }
 
-        /* スマホ用タイトルロゴ */
+        /* タイトルロゴアニメーション（上から降りてくる演出） */
+        @keyframes slideDownLogo {
+            0% {
+                transform: translateY(-200px);
+                opacity: 0;
+            }
+            100% {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
         .title-logo {
-            font-size: clamp(32px, 8vw, 42px);
+            font-size: clamp(32px, 8vw, 44px);
             font-weight: 900;
             text-align: center;
             color: #00ffcc;
             text-shadow: 0 0 12px #00ffcc, 0 0 24px #00ffcc;
-            margin-bottom: 25px;
+            margin-bottom: 30px;
             line-height: 1.1;
+            animation: slideDownLogo 1.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
         }
 
-        /* メニューボタン（タップしやすいサイズ） */
+        /* スタートボタン点滅アニメーション */
+        @keyframes blinkBtn {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.98); }
+        }
+
+        .start-blink-btn {
+            animation: blinkBtn 1.5s infinite ease-in-out;
+        }
+
+        /* メニューボタン */
         .menu-group {
             display: flex;
             flex-direction: column;
@@ -120,7 +141,7 @@
             color: #fff;
         }
 
-        /* スマホ用モーダルカード */
+        /* モーダルカード */
         .modal-card {
             background: #18181c;
             border: 2px solid #00ffcc;
@@ -219,22 +240,24 @@
 </head>
 <body>
     <div id="game-container">
-        <!-- メインキャンバス（スマホ全画面対応） -->
+        <!-- メインキャンバス -->
         <canvas id="gameCanvas"></canvas>
 
         <!-- 1. タイトル画面 -->
         <div id="screen-title" class="overlay-screen active">
-            <h1 class="title-logo" id="title-logo-el">PUZZLE<br>BUBBLE</h1>
+            <!-- 上から降りてくるタイトルロゴ -->
+            <h1 class="title-logo" id="title-logo-el">バブルパズル</h1>
             <div class="menu-group">
-                <button class="menu-btn" onclick="startSinglePlay()">👤 ひとりであそぶ</button>
-                <button class="menu-btn sub" onclick="setupRole('host')">🏠 部屋をつくる (1P)</button>
-                <button class="menu-btn sub" onclick="setupRole('guest')">🚪 部屋にはいる (2P)</button>
+                <!-- 点滅するスタートボタン／タップであそびかた・BGM開始等の処理へ -->
+                <button class="menu-btn start-blink-btn" onclick="handleTitleTap()">PRESS TO START</button>
+                <button class="menu-btn" onclick="startSinglePlay()">👤 一人で遊ぶ</button>
+                <button class="menu-btn sub" onclick="openFriendBattleMenu()">⚔️ フレンド対戦</button>
                 <button class="menu-btn gray" onclick="goToHowToPlay()">📖 あそびかた</button>
                 <button class="menu-btn gray" onclick="showRankingBoard()">🏆 ランキング</button>
             </div>
         </div>
 
-        <!-- 2. 遊び方画面 -->
+        <!-- 2. 遊び方説明画面（１タップ目やボタンから遷移） -->
         <div id="screen-how-to-play" class="overlay-screen">
             <div class="modal-card">
                 <div id="how-to-play-content">
@@ -257,7 +280,19 @@
             </div>
         </div>
 
-        <!-- 3. ホスト待ち受け -->
+        <!-- 3. フレンド対戦 選択画面 -->
+        <div id="screen-friend-menu" class="overlay-screen">
+            <div class="modal-card">
+                <h2>⚔️ フレンド対戦</h2>
+                <div class="menu-group" style="width:100%;">
+                    <button class="menu-btn sub" onclick="setupRole('host')">🏠 部屋をつくる (1P)</button>
+                    <button class="menu-btn sub" onclick="setupRole('guest')">🚪 部屋にはいる (2P)</button>
+                    <button class="menu-btn gray" onclick="returnToTitle()">戻る</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. ホスト待ち受け画面 -->
         <div id="screen-host-wait" class="overlay-screen">
             <div class="modal-card">
                 <h2>部屋を作成しました</h2>
@@ -268,7 +303,7 @@
             </div>
         </div>
 
-        <!-- 4. ホスト用ルール設定画面 -->
+        <!-- 5. ホスト用ルール設定画面 -->
         <div id="screen-host-rule-setup" class="overlay-screen">
             <div class="modal-card">
                 <h2>対戦ルール設定</h2>
@@ -290,7 +325,7 @@
             </div>
         </div>
 
-        <!-- 5. ゲスト部屋番号入力画面 -->
+        <!-- 6. ゲスト部屋番号入力画面 -->
         <div id="screen-guest-join" class="overlay-screen">
             <div class="modal-card">
                 <h2>部屋に参加する</h2>
@@ -302,7 +337,7 @@
             </div>
         </div>
 
-        <!-- 6. ゲスト用ルール待ち受け画面 -->
+        <!-- 7. ゲスト用ルール待ち受け画面 -->
         <div id="screen-guest-wait-rule" class="overlay-screen">
             <div class="modal-card">
                 <h2>対戦準備中</h2>
@@ -310,7 +345,7 @@
             </div>
         </div>
 
-        <!-- 7. 対戦ルール確認画面 -->
+        <!-- 8. 対戦ルール確認画面 -->
         <div id="screen-battle-rules-desc" class="overlay-screen">
             <div class="modal-card">
                 <h2>⚔️ 対戦ルール</h2>
@@ -319,7 +354,7 @@
             </div>
         </div>
 
-        <!-- 8. ステージクリア画面 -->
+        <!-- 9. ステージクリア画面 -->
         <div id="screen-stage-clear" class="overlay-screen">
             <div class="modal-card">
                 <h2 style="color:#4dff4d;">STAGE CLEAR!</h2>
@@ -328,7 +363,7 @@
             </div>
         </div>
 
-        <!-- 9. ゲームオーバー画面 -->
+        <!-- 10. ゲームオーバー画面 -->
         <div id="screen-game-over" class="overlay-screen">
             <div class="modal-card">
                 <h2 style="color:#ff4d4d;">GAME OVER</h2>
@@ -337,7 +372,7 @@
             </div>
         </div>
 
-        <!-- 10. 対戦リザルト画面 -->
+        <!-- 11. 対戦リザルト画面 -->
         <div id="screen-battle-result" class="overlay-screen">
             <div class="modal-card">
                 <h2 id="battle-result-title"></h2>
@@ -355,7 +390,7 @@
             </div>
         </div>
 
-        <!-- 11. ランキング表示画面 -->
+        <!-- 12. ランキング表示画面 -->
         <div id="screen-ranking" class="overlay-screen">
             <div class="modal-card">
                 <h2 style="color:#ffcc00;">🏆 ハイスコア</h2>
@@ -375,7 +410,7 @@
             </div>
         </div>
 
-        <!-- 12. ハイスコア名前入力画面 -->
+        <!-- 13. ハイスコア名前入力画面 -->
         <div id="screen-name-input" class="overlay-screen">
             <div class="modal-card">
                 <h2 style="color:#ffcc00;">🎉 ランクイン！</h2>
@@ -385,7 +420,7 @@
             </div>
         </div>
 
-        <!-- 13. 設定モーダル -->
+        <!-- 14. 設定モーダル -->
         <div id="settings-overlay" class="overlay-screen">
             <div class="modal-card">
                 <h2>⚙️ デザイン設定</h2>
@@ -397,6 +432,7 @@
 
     </div>
 
+    <!-- 従来通りのスクリプト読み込み -->
     <script src="script.js"></script>
 </body>
 </html>
