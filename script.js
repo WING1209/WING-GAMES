@@ -415,24 +415,13 @@ function nextStageAction() {
         totalClearTime += (STAGE_TIME_LIMIT - remainingTime);
         currentStage++;
         bombUsesLeft = 2;
-        remainingTime = STAGE_TIME_LIMIT; // ステージごとに150秒リセット
+        remainingTime = STAGE_TIME_LIMIT;
         initGridForStage(currentStage);
         spawnBullet();
         gameState = 'playing';
         startTimer();
         showScreen('');
     }
-}
-
-function retryStage() {
-    bombUsesLeft = 2;
-    remainingTime = STAGE_TIME_LIMIT; // リトライ時も150秒リセット
-    initGridForStage(currentStage);
-    spawnBullet();
-    gameState = 'playing';
-    playRandomBGM();
-    startTimer();
-    showScreen('');
 }
 
 function returnToTitle() {
@@ -496,27 +485,38 @@ function checkClearCondition() {
     }
 }
 
-// 🎯 ゲームオーバー判定（打ち出し位置から玉1つ分上のライン ROWS - 3 に達したら終了）
+// 🎯 ゲームオーバー処理（再挑戦なし・3秒後ランキング判定・遷移）
+function triggerSoloGameOver(msg) {
+    stopTimer();
+    stopBGM();
+    playSE(se.gameOver);
+    gameState = 'gameover_menu';
+    document.getElementById('gameover-score-text').innerText = `${msg}\nスコア: ${score}`;
+    showScreen('screen-game-over');
+
+    // 3秒間表示後に判定へ移動
+    setTimeout(() => {
+        checkSoloGameOverRankIn();
+    }, 3000);
+}
+
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
 
-    let limitRow = ROWS - 3; // デッドライン（打ち出し位置より玉1つ分上）
+    let limitRow = ROWS - 3; // デッドライン
 
     for (let r = limitRow; r < ROWS; r++) {
         let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
         for (let cc = 0; cc < rowCols; cc++) {
             if (grid[r][cc] !== null) {
-                playSE(se.gameOver);
-                stopBGM();
                 if (gameMode === 'battle') {
+                    playSE(se.gameOver);
+                    stopBGM();
                     opponentWins++;
                     if (conn && conn.open) conn.send({ type: 'round_loss' });
                     checkBattleSetEnd('OPPONENT');
                 } else {
-                    stopTimer();
-                    gameState = 'gameover_menu';
-                    document.getElementById('gameover-score-text').innerText = `ステージ ${currentStage} で終了\nスコア: ${score}`;
-                    showScreen('screen-game-over');
+                    triggerSoloGameOver(`ステージ ${currentStage} で終了`);
                 }
                 return;
             }
@@ -525,11 +525,7 @@ function checkGameOverCondition() {
 }
 
 function handleTimeOutGameOver() {
-    playSE(se.gameOver);
-    stopBGM();
-    gameState = 'gameover_menu';
-    document.getElementById('gameover-score-text').innerText = `タイムアップ！ (ステージ ${currentStage})\nスコア: ${score}`;
-    showScreen('screen-game-over');
+    triggerSoloGameOver(`タイムアップ！ (ステージ ${currentStage})`);
 }
 
 function checkSoloGameOverRankIn() {
@@ -583,7 +579,6 @@ function requestRematch() {
     startNextRound();
 }
 
-// 🎉 勝利・全クリア時（紙吹雪・花火）
 function initWinParticles() {
     particles = [];
     const colors = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda', '#ffffff', '#ffcc00'];
@@ -602,7 +597,6 @@ function initWinParticles() {
     }
 }
 
-// ☔ 敗北時（雨）
 function initLoseParticles() {
     particles = [];
     for (let i = 0; i < 100; i++) {
