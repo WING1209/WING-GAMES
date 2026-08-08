@@ -11,7 +11,7 @@ const se = {
     rainbowLand: new Audio(`${audioPath}se/se_rainbow_land.wav`),
     rainbowSet:  new Audio(`${audioPath}se/se_rainbow_set.wav`),
     blockFall:   new Audio(`${audioPath}se/se_block_fall.wav`),
-    gameOver:    new Audio(`${audioPath}se/se_game_over.wav`),
+    gameOver:    new Audio(`${audioPath}se/se_game_over.mp3`),
     stageClear:  new Audio(`${audioPath}se/se_stage_clear.wav`)
 };
 
@@ -92,7 +92,7 @@ let targetWins = 1;
 let myWins = 0;
 let opponentWins = 0;
 
-let battleRole = ''; // 'host' | 'guest'
+let battleRole = ''; // 'host' (1P) | 'guest' (2P)
 let roomCode = '';
 let gameState = 'title';
 
@@ -123,9 +123,15 @@ let isMoving = false;
 let fallingBubbles = [];
 let flashingBubbles = [];
 let particles = [];
+let fireworks = [];
 let battleWinner = '';
 
-// タイマー関連（ソロモード：1ステージ150秒スタート）
+// --- 💥 お邪魔玉演出用変数 ---
+let attackNoticeText = "";
+let attackNoticeTimer = 0;
+let shakeTimer = 0;
+
+// タイマー関連（ソロモード）
 const STAGE_TIME_LIMIT = 150;
 let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
@@ -148,7 +154,7 @@ function showScreen(screenId) {
             let logo = target.querySelector('.title-logo');
             if (logo) {
                 logo.style.animation = 'none';
-                logo.offsetHeight; /* trigger reflow */
+                logo.offsetHeight;
                 logo.style.animation = null;
             }
         }
@@ -157,9 +163,7 @@ function showScreen(screenId) {
 
 function goToHowToPlay() {
     unlockAudio();
-    if (gameState === 'title') {
-        showScreen('screen-how-to-play');
-    }
+    if (gameState === 'title') showScreen('screen-how-to-play');
 }
 
 function startTimer() {
@@ -231,7 +235,6 @@ function initGridForStage(stage) {
     }
 }
 
-// --- ソロモード開始 ---
 function startSinglePlay() {
     closeNetwork();
     gameMode = 'single';
@@ -248,9 +251,9 @@ function startSinglePlay() {
     showScreen('');
 }
 
-// 🌐 ネットワーク & フレンド対戦フロー
+// 🌐 ネットワーク対戦（P1/P2区別機能）
 function setupRole(role) {
-    battleRole = role;
+    battleRole = role; // 'host' (1P) または 'guest' (2P)
     closeNetwork();
 
     if (role === 'host') {
@@ -311,9 +314,15 @@ function setupConnectionListeners() {
             executeBattleStart();
         } else if (data.type === 'attack' && battleType === 'お邪魔対戦') {
             addOjamaBubbles(data.amount);
-        } else if (data.type === 'round_loss') {
-            myWins++;
-            checkBattleSetEnd('YOU');
+        } else if (data.type === 'round_result') {
+            let iWon = (data.winner === battleRole);
+            if (iWon) {
+                myWins++;
+                checkBattleSetEnd('YOU');
+            } else {
+                opponentWins++;
+                checkBattleSetEnd('OPPONENT');
+            }
         } else if (data.type === 'rematch') {
             myWins = 0;
             opponentWins = 0;
@@ -356,11 +365,11 @@ function displayBattleRulesDesc() {
     let desc = "";
     if (battleType === 'タイムアタック') {
         desc = `<b>【⏱️ タイムアタック】</b><br>` +
-               `画面上の「消せる玉」を相手より先にすべて消したプレイヤーの勝利です！<br><br>` +
+               `画面上の消せる玉を相手より先にすべて消した方の勝利！<br><br>` +
                `・勝利条件: ${targetWins}勝先取`;
     } else {
         desc = `<b>【⚔️ お邪魔対戦】</b><br>` +
-               `玉を消すと「消した玉＋落ちた玉」の分だけ相手の上部にランダムなお邪魔玉を送ります！<br><br>` +
+               `玉を消すと相手に攻撃！お邪魔玉を送り込んで全滅させよう！<br><br>` +
                `・勝利条件: 相手を全滅させるか先に全消し (${targetWins}勝先取)`;
     }
     document.getElementById('rules-text-content').innerHTML = desc;
@@ -368,9 +377,7 @@ function displayBattleRulesDesc() {
 }
 
 function readyToStartBattle() {
-    if (conn && conn.open) {
-        conn.send({ type: 'ready_start' });
-    }
+    if (conn && conn.open) conn.send({ type: 'ready_start' });
     executeBattleStart();
 }
 
@@ -414,25 +421,29 @@ function sendAttackToOpponent(amount) {
     }
 }
 
-// 💥 お邪魔玉の発生ロジック（修正版：ランダムな列に確実分散挿入）
+// 💥 お邪魔玉演出＆挿入
 function addOjamaBubbles(amount) {
     if (amount <= 0) return;
 
+    // 演出トリガー
+    attackNoticeText = `⚠️ WARNING! お邪魔玉 +${amount} ⚠️`;
+    attackNoticeTimer = 75; // 約1.2秒表示
+    shakeTimer = Math.min(shakeTimer + 12, 30); // 画面振動（上限キャップ付き）
+    
+    // 💣 攻撃被弾音（se_bomb_explode.wav）
+    playSE(se.bombExplode);
+
     for (let i = 0; i < amount; i++) {
         let newColor = getRandomGridColor();
-
-        // 0行目（最上段）の空いている列を検索
         let emptyColsInTopRow = [];
         for (let c = 0; c < COLS; c++) {
             if (grid[0][c] === null) emptyColsInTopRow.push(c);
         }
 
         if (emptyColsInTopRow.length > 0) {
-            // 空きがあればランダムな空き列に設置
             let chosenCol = emptyColsInTopRow[Math.floor(Math.random() * emptyColsInTopRow.length)];
             grid[0][chosenCol] = newColor;
         } else {
-            // 最上段が全て埋まっている場合のみ、1列選んで下方向へ押し出す
             let targetCol = Math.floor(Math.random() * COLS);
             for (let r = ROWS - 1; r > 0; r--) {
                 let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
@@ -443,7 +454,6 @@ function addOjamaBubbles(amount) {
             grid[0][targetCol] = newColor;
         }
     }
-    
     removeFloating();
     checkGameOverCondition();
 }
@@ -516,7 +526,9 @@ function checkClearCondition() {
         playSE(se.stageClear);
         if (gameMode === 'battle') {
             myWins++;
-            if (conn && conn.open) conn.send({ type: 'round_loss' });
+            if (conn && conn.open) {
+                conn.send({ type: 'round_result', winner: battleRole });
+            }
             checkBattleSetEnd('YOU');
         } else {
             if (currentStage < maxStages) {
@@ -553,10 +565,12 @@ function checkGameOverCondition() {
         for (let cc = 0; cc < rowCols; cc++) {
             if (grid[r][cc] !== null) {
                 if (gameMode === 'battle') {
-                    playSE(se.gameOver);
                     stopBGM();
                     opponentWins++;
-                    if (conn && conn.open) conn.send({ type: 'round_loss' });
+                    let opponentRole = (battleRole === 'host') ? 'guest' : 'host';
+                    if (conn && conn.open) {
+                        conn.send({ type: 'round_result', winner: opponentRole });
+                    }
                     checkBattleSetEnd('OPPONENT');
                 } else {
                     triggerSoloGameOver(`ステージ ${currentStage} で終了`);
@@ -579,12 +593,16 @@ function checkSoloGameOverRankIn() {
     }
 }
 
+// 🏆 勝敗判定・UI表示・共通 game_over.mp3 再生
 function checkBattleSetEnd(roundWinner) {
     if (myWins >= targetWins || opponentWins >= targetWins) {
         battleWinner = myWins >= targetWins ? 'YOU' : 'OPPONENT';
         gameState = 'battle_result';
         stopBGM();
         
+        // 🎵 ゲームセット時：全モード・勝者/敗者・1P/2P 共通で se_game_over.mp3 を再生
+        playSE(se.gameOver);
+
         let titleEl = document.getElementById('battle-result-title');
         let subEl = document.getElementById('battle-result-sub');
         let loserControls = document.getElementById('battle-loser-controls');
@@ -594,16 +612,16 @@ function checkBattleSetEnd(roundWinner) {
             titleEl.innerText = "🏆 勝利！ WINNER!";
             titleEl.style.color = "#ffcc00";
             subEl.innerText = `勝利達成！ (${myWins}勝 - ${opponentWins}勝)`;
-            initWinParticles();
-            loserControls.style.display = 'none';
-            winnerWait.style.display = 'block';
+            initWinParticles(); // 🎆 花火演出
+            if (loserControls) loserControls.style.display = 'none';
+            if (winnerWait) winnerWait.style.display = 'block';
         } else {
             titleEl.innerText = "💀 敗北... LOSER";
             titleEl.style.color = "#ff4d4d";
             subEl.innerText = `対戦に敗北しました (${myWins}勝 - ${opponentWins}勝)`;
-            initLoseParticles();
-            loserControls.style.display = 'flex';
-            winnerWait.style.display = 'none';
+            initLoseParticles(); // 🌧️ 雨演出
+            if (loserControls) loserControls.style.display = 'flex';
+            if (winnerWait) winnerWait.style.display = 'none';
         }
 
         showScreen('screen-battle-result');
@@ -614,73 +632,120 @@ function checkBattleSetEnd(roundWinner) {
 }
 
 function requestRematch() {
-    if (conn && conn.open) {
-        conn.send({ type: 'rematch' });
-    }
+    if (conn && conn.open) conn.send({ type: 'rematch' });
     myWins = 0;
     opponentWins = 0;
     startNextRound();
 }
 
+// 🎆 勝者用：打ち上げ花火演出
 function initWinParticles() {
     particles = [];
-    const colors = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda', '#ffffff', '#ffcc00'];
-    for (let i = 0; i < 150; i++) {
+    fireworks = [];
+}
+
+function spawnFirework() {
+    const x = Math.random() * (canvas.width - 100) + 50;
+    const targetY = Math.random() * (canvas.height * 0.4) + 50;
+    fireworks.push({
+        x: x,
+        y: canvas.height,
+        targetY: targetY,
+        vy: -7 - Math.random() * 3,
+        color: BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)]
+    });
+}
+
+function createExplosion(x, y, color) {
+    const count = 40;
+    for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 / count) * i + Math.random() * 0.2;
+        const speed = Math.random() * 4 + 2;
         particles.push({
-            type: 'confetti',
-            x: Math.random() * canvas.width,
-            y: Math.random() * canvas.height - canvas.height,
-            size: Math.random() * 8 + 4,
-            color: colors[Math.floor(Math.random() * colors.length)],
-            vx: (Math.random() - 0.5) * 4,
-            vy: Math.random() * 4 + 2,
-            rotation: Math.random() * 360,
-            vRot: (Math.random() - 0.5) * 10
+            type: 'firework_spark',
+            x: x,
+            y: y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            alpha: 1.0,
+            color: color,
+            size: Math.random() * 3 + 2
         });
     }
 }
 
+// 🌧️ 敗者用：雨演出
 function initLoseParticles() {
     particles = [];
-    for (let i = 0; i < 100; i++) {
+    fireworks = [];
+    for (let i = 0; i < 80; i++) {
         particles.push({
             type: 'rain',
             x: Math.random() * canvas.width,
             y: Math.random() * canvas.height,
-            len: Math.random() * 20 + 10,
-            vy: Math.random() * 8 + 8,
+            len: Math.random() * 15 + 10,
+            vy: Math.random() * 6 + 10,
             color: 'rgba(120, 160, 255, 0.6)'
         });
     }
 }
 
 function updateParticles() {
-    for (let p of particles) {
-        if (p.type === 'confetti') {
-            p.x += p.vx; p.y += p.vy; p.rotation += p.vRot;
-            if (p.y > canvas.height) { p.y = -20; p.x = Math.random() * canvas.width; }
+    if ((gameState === 'battle_result' && battleWinner === 'YOU' || gameState === 'gameclear') && Math.random() < 0.05) {
+        spawnFirework();
+    }
+
+    for (let i = fireworks.length - 1; i >= 0; i--) {
+        let fw = fireworks[i];
+        fw.y += fw.vy;
+        if (fw.y <= fw.targetY) {
+            createExplosion(fw.x, fw.y, fw.color);
+            fireworks.splice(i, 1);
+        }
+    }
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        if (p.type === 'firework_spark') {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.05;
+            p.alpha -= 0.02;
+            if (p.alpha <= 0) particles.splice(i, 1);
         } else if (p.type === 'rain') {
             p.y += p.vy;
-            if (p.y > canvas.height) { p.y = -20; p.x = Math.random() * canvas.width; }
+            if (p.y > canvas.height) {
+                p.y = -20;
+                p.x = Math.random() * canvas.width;
+            }
         }
     }
 }
 
 function drawParticles() {
+    for (let fw of fireworks) {
+        ctx.beginPath();
+        ctx.arc(fw.x, fw.y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = fw.color;
+        ctx.fill();
+        ctx.closePath();
+    }
+
     for (let p of particles) {
-        if (p.type === 'confetti') {
+        if (p.type === 'firework_spark') {
             ctx.save();
-            ctx.translate(p.x, p.y);
-            ctx.rotate((p.rotation * Math.PI) / 180);
+            ctx.globalAlpha = p.alpha;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
             ctx.fillStyle = p.color;
-            ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+            ctx.fill();
             ctx.restore();
         } else if (p.type === 'rain') {
             ctx.beginPath();
             ctx.moveTo(p.x, p.y);
             ctx.lineTo(p.x, p.y + p.len);
             ctx.strokeStyle = p.color;
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 1.5;
             ctx.stroke();
             ctx.closePath();
         }
@@ -925,6 +990,9 @@ function update() {
         return;
     }
 
+    if (attackNoticeTimer > 0) attackNoticeTimer--;
+    if (shakeTimer > 0) shakeTimer--;
+
     for (let i = fallingBubbles.length - 1; i >= 0; i--) {
         let fb = fallingBubbles[i];
         fb.y += fb.vy; fb.vy += 0.6;
@@ -1070,6 +1138,13 @@ function draw() {
     if (gameState === 'gameclear') { drawGameClearScreen(); return; }
     if (gameState === 'battle_result') { drawBattleResultScreen(); return; }
 
+    ctx.save();
+    if (shakeTimer > 0) {
+        let offsetX = (Math.random() - 0.5) * 10;
+        let offsetY = (Math.random() - 0.5) * 10;
+        ctx.translate(offsetX, offsetY);
+    }
+
     ctx.fillStyle = "#111";
     ctx.fillRect(0, 0, canvas.width, TOP_MARGIN);
     ctx.strokeStyle = "#444";
@@ -1079,7 +1154,7 @@ function draw() {
     ctx.fillStyle = "#fff";
     ctx.font = "bold 12px sans-serif";
     if (gameMode === 'battle') {
-        let roleText = battleRole === 'host' ? '1P' : '2P';
+        let roleText = battleRole === 'host' ? '1P (HOST)' : '2P (GUEST)';
         ctx.fillText(`対戦[${roleText}] (${targetWins}勝先取): ${myWins} - ${opponentWins}`, 12, 24);
         ctx.fillText(`モード: ${battleType}`, 12, 42);
     } else {
@@ -1150,6 +1225,24 @@ function draw() {
     } else {
         drawBubble(shooterX, shooterY, bulletColor, RADIUS);
     }
+
+    // 💥 画面中央のお邪魔玉被弾ダイナミック通知
+    if (attackNoticeTimer > 0) {
+        ctx.save();
+        ctx.fillStyle = "rgba(255, 0, 0, 0.85)";
+        ctx.fillRect(10, canvas.height / 2 - 30, canvas.width - 20, 50);
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(10, canvas.height / 2 - 30, canvas.width - 20, 50);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(attackNoticeText, canvas.width / 2, canvas.height / 2 + 2);
+        ctx.restore();
+    }
+
+    ctx.restore();
 }
 
 function drawTitleBackground() {
@@ -1160,12 +1253,10 @@ function drawTitleBackground() {
 function drawGameClearScreen() {
     ctx.fillStyle = "#111";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-
     drawParticles();
 
     ctx.save();
     ctx.textAlign = "center";
-
     ctx.font = "bold 22px sans-serif";
     ctx.fillStyle = "#4dff4d";
     ctx.fillText("🎉 完全攻略！ 🎉", canvas.width / 2, canvas.height / 2 - 90);
@@ -1183,7 +1274,6 @@ function drawGameClearScreen() {
     ctx.font = "14px sans-serif";
     ctx.fillStyle = "#4da6ff";
     ctx.fillText("画面をタップしてランキング登録へ ➔", canvas.width / 2, canvas.height / 2 + 100);
-
     ctx.restore();
 }
 
