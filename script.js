@@ -204,7 +204,7 @@ function initGridForStage(stage) {
         grid.push(row);
     }
 
-    // 💡 フレンド対戦時は消せない玉（UNBREAKABLE_COLOR）を設置しない
+    // フレンド対戦時は消せない玉（UNBREAKABLE_COLOR）を設置しない
     if (gameMode !== 'battle') {
         let maxUnbreakable = Math.min(6, stage);
         let placed = 0;
@@ -415,51 +415,37 @@ function sendAttackToOpponent(amount) {
     }
 }
 
-// 💥 お邪魔玉の押し込み生成ロジック（通常のカラー玉を1つずつ上部から押し出す）
+// 💥 お邪魔玉の最上部押し込み生成ロジック（修正版）
 function addOjamaBubbles(amount) {
     if (amount <= 0) return;
 
     for (let i = 0; i < amount; i++) {
-        // ランダムな列を選択
+        // ランダムな列（0〜COLS-1）を選択
         let c = Math.floor(Math.random() * COLS);
         let newColor = getRandomGridColor();
 
-        // 列ごとに上から順に押し下げる（隙間があればそこまで押し込み、詰まっていれば全体を押し下げる）
-        // 0行目（最上段）に玉を挿入するため、下に空きマス（null）がある最深位置を探す
-        let emptyRow = -1;
-        for (let r = 0; r < ROWS; r++) {
-            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-            if (c >= colsInRow) continue; // 偶数段/奇数段の列数調整
-            if (grid[r][c] === null) {
-                emptyRow = r;
-                break;
+        // 該当列の玉を「最下段から順に1マスずつ下へ押し出す」
+        // これにより、最上段（0行目）に新しい玉が押し込まれ、既存の玉が自然に1マスずつ下に下がります
+        for (let r = ROWS - 1; r > 0; r--) {
+            // 偶数行・奇数行の列幅差に配慮
+            let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
+            let prevCols = ((r - 1) % 2 === 0) ? COLS : COLS - 1;
+
+            if (c < currentCols) {
+                if (c < prevCols) {
+                    grid[r][c] = grid[r - 1][c];
+                } else {
+                    grid[r][c] = null;
+                }
             }
         }
 
-        if (emptyRow !== -1) {
-            // 空きマス（隙間）までの既存の玉を1マスずつ下へ押し出す
-            for (let r = emptyRow; r > 0; r--) {
-                let prevCols = ((r - 1) % 2 === 0) ? COLS : COLS - 1;
-                if (c < prevCols) {
-                    grid[r][c] = grid[r - 1][c];
-                } else {
-                    grid[r][c] = null;
-                }
-            }
-            grid[0][c] = newColor;
-        } else {
-            // 列が完全に詰まっている場合は最下段から溢れる形にして1つ下げる
-            for (let r = ROWS - 1; r > 0; r--) {
-                let prevCols = ((r - 1) % 2 === 0) ? COLS : COLS - 1;
-                if (c < prevCols) {
-                    grid[r][c] = grid[r - 1][c];
-                } else {
-                    grid[r][c] = null;
-                }
-            }
-            grid[0][c] = newColor;
-        }
+        // 最上部（0行目）に新しいランダムカラーの玉を設置
+        grid[0][c] = newColor;
     }
+    
+    // 押し出された結果、浮いた状態になった玉の脱落処理やゲームオーバー判定
+    removeFloating();
     checkGameOverCondition();
 }
 
@@ -959,7 +945,6 @@ function update() {
         checkClearCondition();
     }
 
-    // 壁・玉への当たり判定（高速移動時のすり抜け防止ステップ処理）
     if (gameState === 'playing' && isMoving) {
         let steps = 4;
         let stepVX = bulletVX / steps;
