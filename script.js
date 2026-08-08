@@ -113,9 +113,9 @@ let flashingBubbles = [];
 let particles = [];
 let battleWinner = '';
 
-// タイマー関連（ソロモード制限時間 300秒）
-const SOLO_TIME_LIMIT = 300;
-let remainingTime = SOLO_TIME_LIMIT;
+// タイマー関連（ソロモード 1ステージ150秒リセット）
+const STAGE_TIME_LIMIT = 150;
+let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
 let totalClearTime = 0;
 
@@ -129,11 +129,24 @@ function showScreen(screenId) {
     let target = document.getElementById(screenId);
     if (target) {
         target.style.display = 'flex';
-        if (screenId === 'screen-mode') {
+        if (screenId === 'screen-title') {
             gameState = 'title';
             stopBGM();
             stopTimer();
+            // ロゴアニメーション再再生用
+            let logo = target.querySelector('.title-logo');
+            if (logo) {
+                logo.style.animation = 'none';
+                logo.offsetHeight; /* trigger reflow */
+                logo.style.animation = null;
+            }
         }
+    }
+}
+
+function goToHowToPlay() {
+    if (gameState === 'title') {
+        showScreen('screen-how-to-play');
     }
 }
 
@@ -212,7 +225,8 @@ function startSinglePlay() {
     score = 0;
     currentStage = 1;
     bombUsesLeft = 2;
-    remainingTime = SOLO_TIME_LIMIT;
+    totalClearTime = 0;
+    remainingTime = STAGE_TIME_LIMIT;
     initGridForStage(currentStage);
     spawnBullet();
     playRandomBGM();
@@ -234,7 +248,6 @@ function setupRole(role) {
         peer.on('connection', (c) => {
             conn = c;
             setupConnectionListeners();
-            // ゲスト接続時にホスト用ルール選択画面へ遷移
             showScreen('screen-host-rule-setup');
         });
         peer.on('error', () => {
@@ -400,21 +413,26 @@ function addOjamaBubbles(amount) {
 
 function nextStageAction() {
     if (currentStage < maxStages) {
+        totalClearTime += (STAGE_TIME_LIMIT - remainingTime);
         currentStage++;
         bombUsesLeft = 2;
+        remainingTime = STAGE_TIME_LIMIT;
         initGridForStage(currentStage);
         spawnBullet();
         gameState = 'playing';
+        startTimer();
         showScreen('');
     }
 }
 
 function retryStage() {
     bombUsesLeft = 2;
+    remainingTime = STAGE_TIME_LIMIT;
     initGridForStage(currentStage);
     spawnBullet();
     gameState = 'playing';
     playRandomBGM();
+    startTimer();
     showScreen('');
 }
 
@@ -423,7 +441,7 @@ function returnToTitle() {
     stopBGM();
     stopTimer();
     gameState = 'title';
-    showScreen('screen-mode');
+    showScreen('screen-title');
 }
 
 function spawnBullet() {
@@ -470,7 +488,7 @@ function checkClearCondition() {
                 showScreen('screen-stage-clear');
             } else {
                 stopTimer();
-                totalClearTime = SOLO_TIME_LIMIT - remainingTime;
+                totalClearTime += (STAGE_TIME_LIMIT - remainingTime);
                 initWinParticles();
                 gameState = 'gameclear';
                 showScreen('');
@@ -482,7 +500,6 @@ function checkClearCondition() {
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
 
-    // 打ち出し位置1マス上（10行目）に玉が来たらゲームオーバー判定
     let limitRow = ROWS - 3;
     for (let r = limitRow; r < ROWS; r++) {
         let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
@@ -584,7 +601,7 @@ function initWinParticles() {
     }
 }
 
-// ☔ 敗北時（雨・ダークテーマ）
+// ☔ 敗北時（雨）
 function initLoseParticles() {
     particles = [];
     for (let i = 0; i < 100; i++) {
@@ -602,19 +619,11 @@ function initLoseParticles() {
 function updateParticles() {
     for (let p of particles) {
         if (p.type === 'confetti') {
-            p.x += p.vx;
-            p.y += p.vy;
-            p.rotation += p.vRot;
-            if (p.y > canvas.height) {
-                p.y = -20;
-                p.x = Math.random() * canvas.width;
-            }
+            p.x += p.vx; p.y += p.vy; p.rotation += p.vRot;
+            if (p.y > canvas.height) { p.y = -20; p.x = Math.random() * canvas.width; }
         } else if (p.type === 'rain') {
             p.y += p.vy;
-            if (p.y > canvas.height) {
-                p.y = -20;
-                p.x = Math.random() * canvas.width;
-            }
+            if (p.y > canvas.height) { p.y = -20; p.x = Math.random() * canvas.width; }
         }
     }
 }
@@ -666,14 +675,14 @@ function checkRankIn() {
 }
 
 function promptNameInput() {
-    let timeText = totalClearTime > 0 ? `${totalClearTime}秒` : `${SOLO_TIME_LIMIT - remainingTime}秒`;
-    document.getElementById('rankin-desc-text').innerText = `到達: STAGE ${currentStage} / タイム: ${timeText} / スコア: ${score}`;
+    let timeVal = (gameState === 'gameclear') ? totalClearTime : (totalClearTime + (STAGE_TIME_LIMIT - remainingTime));
+    document.getElementById('rankin-desc-text').innerText = `到達: STAGE ${currentStage} / タイム: ${timeVal}秒 / スコア: ${score}`;
     showScreen('screen-name-input');
 }
 
 function submitScoreAndShowRanking() {
     let name = document.getElementById('player-name-input').value.trim();
-    let timeVal = totalClearTime > 0 ? totalClearTime : (SOLO_TIME_LIMIT - remainingTime);
+    let timeVal = (gameState === 'gameclear') ? totalClearTime : (totalClearTime + (STAGE_TIME_LIMIT - remainingTime));
     saveRanking(name, currentStage, timeVal, score);
     returnToTitle();
 }
@@ -988,7 +997,6 @@ function snapBullet() {
                         grid[m.r][m.c] = null; score += 10;
                     }
                     let floatCount = removeFloating();
-                    // お邪魔対戦の攻撃数 = (消した数 + ぶら下がりで落ちた数)
                     sendAttackToOpponent(matches.length + floatCount);
                 }
             }
@@ -1103,12 +1111,10 @@ function drawGameClearScreen() {
     ctx.save();
     ctx.textAlign = "center";
 
-    // 「完全攻略！」表示
     ctx.font = "bold 22px sans-serif";
     ctx.fillStyle = "#4dff4d";
     ctx.fillText("🎉 完全攻略！ 🎉", canvas.width / 2, canvas.height / 2 - 90);
 
-    // カラフルに点滅する CONGRATULATIONS!
     let colorIndex = Math.floor(Date.now() / 200) % BASE_COLORS.length;
     ctx.font = "900 26px 'Segoe UI', sans-serif";
     ctx.fillStyle = BASE_COLORS[colorIndex];
@@ -1228,5 +1234,5 @@ function loop() {
     requestAnimationFrame(loop);
 }
 
-showScreen('screen-mode');
+showScreen('screen-title');
 loop();
