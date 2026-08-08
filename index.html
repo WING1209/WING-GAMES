@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WING GAME 暇つぶし玉</title>
+    <title>○o WING GAME玉 o○</title>
     <!-- PeerJS (通信用ライブラリ) -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
@@ -68,6 +68,34 @@
             font-size: 26px;
             margin-bottom: 20px;
         }
+        
+        /* 🎬 タイトルロゴのアニメーション設定 */
+        .title-logo {
+            font-size: 28px;
+            font-weight: 900;
+            color: #ffcc00;
+            text-shadow: 0 0 12px rgba(255, 204, 0, 0.6);
+            margin-bottom: 40px;
+            animation: dropDown 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        @keyframes dropDown {
+            0% { transform: translateY(-200px); opacity: 0; }
+            100% { transform: translateY(0); opacity: 1; }
+        }
+
+        /* ✨ STARTの点滅アニメーション */
+        .blink-text {
+            font-size: 20px;
+            font-weight: bold;
+            color: #4da6ff;
+            animation: blink 1.2s infinite ease-in-out;
+            cursor: pointer;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.2; transform: scale(0.95); }
+        }
+
         .menu-btn {
             background: #ffcc00;
             color: #111;
@@ -122,13 +150,17 @@
         .rules-box {
             background: #222;
             border: 1px solid #555;
-            padding: 12px;
-            border-radius: 8px;
-            font-size: 13px;
+            padding: 16px;
+            border-radius: 10px;
+            font-size: 14px;
             text-align: left;
-            line-height: 1.5;
-            margin-bottom: 15px;
-            max-width: 320px;
+            line-height: 1.6;
+            margin-bottom: 20px;
+            max-width: 330px;
+            box-shadow: inset 0 0 8px rgba(0,0,0,0.5);
+        }
+        .rules-box b {
+            color: #ffcc00;
         }
     </style>
 </head>
@@ -137,16 +169,36 @@
     <div id="game-container">
         <canvas id="gameCanvas" width="400" height="750"></canvas>
 
-        <!-- ① タイトル画面 -->
+        <!-- ① タイトル画面（上から降りるロゴ＆点滅スタート） -->
+        <div id="screen-title" class="overlay-screen" style="display:flex; cursor:pointer;" onclick="goToHowToPlay()">
+            <div class="title-logo">○o WING GAME玉 o○</div>
+            <div class="blink-text">- START (画面をタップ) -</div>
+        </div>
+
+        <!-- ①-2 遊び方（チュートリアル）画面 -->
+        <div id="screen-how-to-play" class="overlay-screen">
+            <h2>🎮 遊び方</h2>
+            <div class="rules-box">
+                <b>【基本操作】</b><br>
+                ・玉を<b>引っ張って狙いを定め、離してショット！</b><br>
+                ・同じ色の玉を<b>3つ以上連結</b>させると消せます。<br><br>
+                <b>【特殊玉を活用しよう】</b><br>
+                ・<b>💣 ボム玉</b>: 右上ボタンでセット！着弾点の周囲をまとめて爆破。<br>
+                ・<b>★ レインボー玉</b>: 当たった玉と同じ色の玉を全消し！
+            </div>
+            <button class="menu-btn" onclick="showScreen('screen-mode')">次へ進む ➔</button>
+        </div>
+
+        <!-- ② モード選択画面 -->
         <div id="screen-mode" class="overlay-screen">
-            <h2>○o WING GAME o○</h2>
+            <h2>モード選択</h2>
             <button class="menu-btn" onclick="startSinglePlay()">🎮 ひとりで遊ぶ</button>
             <button class="menu-btn sub" onclick="showScreen('screen-role-select')">⚔️ フレンド対戦</button>
             <button class="menu-btn gray" onclick="showRankingBoard()">🏆 スコアランキング</button>
             <button class="menu-btn gray" onclick="openSettings()">⚙️ 玉画像設定</button>
         </div>
 
-        <!-- ② 役割選択画面 (1P/2P) -->
+        <!-- ③ 役割選択画面 (1P/2P) -->
         <div id="screen-role-select" class="overlay-screen">
             <h2>対戦設定</h2>
             <button class="menu-btn" onclick="setupRole('host')">👑 1P（ホスト：部屋を作る）</button>
@@ -154,7 +206,7 @@
             <button class="menu-btn gray" onclick="showScreen('screen-mode')">もどる</button>
         </div>
 
-        <!-- ③ 2P(ゲスト)用 合言葉入力画面 -->
+        <!-- ④ 2P(ゲスト)用 合言葉入力画面 -->
         <div id="screen-guest-join" class="overlay-screen">
             <h2>合言葉を入力</h2>
             <p style="font-size: 14px; color: #ccc;">1P(ホスト)から教わった4桁の数字を入力</p>
@@ -165,7 +217,7 @@
             <div id="status-message"></div>
         </div>
 
-        <!-- ④ 1P(ホスト)用 待機画面 -->
+        <!-- ⑤ 1P(ホスト)用 待機画面 -->
         <div id="screen-host-wait" class="overlay-screen">
             <h2>2Pの接続待ち...</h2>
             <p style="font-size: 14px; color: #ccc;">以下の4桁を2P(ゲスト)に伝えてください</p>
@@ -174,14 +226,14 @@
             <button class="menu-btn gray" onclick="cancelNetwork('screen-role-select')">キャンセル</button>
         </div>
 
-        <!-- ⑤ 2P(ゲスト)用 ルール選択待ち画面 -->
+        <!-- ⑥ 2P(ゲスト)用 ルール選択待ち画面 -->
         <div id="screen-guest-wait-rule" class="overlay-screen">
             <h2 style="color:#4dff4d;">接続完了！</h2>
             <p style="font-size: 18px; color: #ffcc00; margin-top: 30px;">対戦モード選択中...</p>
             <p style="font-size: 14px; color: #aaa;">Wait...</p>
         </div>
 
-        <!-- ⑥ 1P(ホスト)用 モード・勝利数設定画面 -->
+        <!-- ⑦ 1P(ホスト)用 モード・勝利数設定画面 -->
         <div id="screen-host-rule-setup" class="overlay-screen">
             <h2 style="color:#4dff4d;">マッチング成功！</h2>
             <p style="font-size: 14px; color: #ccc;">対戦ルールを選択してください</p>
@@ -201,14 +253,14 @@
             <button class="menu-btn" style="background:#ffcc00; margin-top:15px;" onclick="confirmHostBattleStart()">ルール確定 ➔</button>
         </div>
 
-        <!-- ⑦ 対戦ルール説明確認画面 -->
+        <!-- ⑧ 対戦ルール説明確認画面 -->
         <div id="screen-battle-rules-desc" class="overlay-screen">
             <h2>ルール説明</h2>
             <div id="rules-text-content" class="rules-box"></div>
             <button class="menu-btn" onclick="readyToStartBattle()">対戦スタート！ 🔥</button>
         </div>
 
-        <!-- ⑧ ステージクリア画面（ソロ途中経過） -->
+        <!-- ⑨ ステージクリア画面（ソロ途中経過） -->
         <div id="screen-stage-clear" class="overlay-screen">
             <h2>STAGE CLEAR!</h2>
             <p id="clear-score-text" style="font-size: 18px; margin-bottom: 20px; color: #fff;"></p>
@@ -216,7 +268,7 @@
             <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ戻る</button>
         </div>
 
-        <!-- ⑨ 名前入力画面（ランクイン時） -->
+        <!-- ⑩ 名前入力画面（ランクイン時） -->
         <div id="screen-name-input" class="overlay-screen">
             <h2 style="color:#4dff4d;">🏆 RANK IN!</h2>
             <p id="rankin-desc-text" style="font-size: 15px; color: #fff;"></p>
@@ -225,7 +277,7 @@
             <button class="menu-btn" onclick="submitScoreAndShowRanking()">登録して決定</button>
         </div>
 
-        <!-- ⑩ ランキング表示画面 -->
+        <!-- ⑪ ランキング表示画面 -->
         <div id="screen-ranking" class="overlay-screen">
             <h2>🏆 殿堂入り TOP 5</h2>
             <table class="ranking-table">
@@ -237,7 +289,7 @@
             <button class="menu-btn sub" onclick="returnToTitle()">タイトルへ戻る</button>
         </div>
 
-        <!-- ⑪ ゲームオーバー画面 -->
+        <!-- ⑫ ゲームオーバー画面 -->
         <div id="screen-game-over" class="overlay-screen">
             <h2 style="color: #ff4d4d;">GAME OVER</h2>
             <p id="gameover-score-text" style="font-size: 18px; margin-bottom: 20px; color: #fff;"></p>
@@ -245,7 +297,7 @@
             <button class="menu-btn gray" onclick="checkSoloGameOverRankIn()">タイトルへ戻る</button>
         </div>
 
-        <!-- ⑫ 対戦結果画面（敗者のみ操作可能） -->
+        <!-- ⑬ 対戦結果画面（敗者のみ操作可能） -->
         <div id="screen-battle-result" class="overlay-screen">
             <h2 id="battle-result-title" style="font-size:36px; margin-bottom:10px;"></h2>
             <p id="battle-result-sub" style="font-size:18px; color:#fff; margin-bottom:30px;"></p>
@@ -260,7 +312,7 @@
             </div>
         </div>
 
-        <!-- ⑬ 設定画面モーダル -->
+        <!-- ⑭ 設定画面モーダル -->
         <div id="settings-overlay" class="overlay-screen" style="justify-content: flex-start; padding-top: 40px;">
             <h2>玉の画像カスタム</h2>
             <div id="settings-list" style="width: 100%; display: flex; flex-direction: column; align-items: center; max-height: 480px; overflow-y: auto;"></div>
