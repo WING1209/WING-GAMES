@@ -65,10 +65,10 @@ function stopBGM() {
     } catch(e) {}
 }
 
-// --- 🎮 ゲーム基本パラメータ (400px x 750px キャンバス幅に完全最適化) ---
-const ROWS = 13;
+// --- 🎮 ゲーム基本パラメータ ---
+const ROWS = 12;
 const COLS = 8;
-const RADIUS = 23.5; // 400px幅にぴったり8個並ぶ計算サイズ (23.5 * 2 * 8 = 376px + マージン)
+const RADIUS = 19;
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3);
 
@@ -79,25 +79,25 @@ const COLOR_NAMES = {
 };
 let customImages = {};
 const UNBREAKABLE_COLOR = '#fff';
-const TOP_MARGIN = 85;
+const TOP_MARGIN = 80;
 
 let grid = [];
 let score = 0;
 let currentStage = 1;
 const maxStages = 10;
 
-let gameMode = 'single';
-let battleType = 'タイムアタック';
+let gameMode = 'single'; // 'single' | 'battle'
+let battleType = 'タイムアタック'; // 'タイムアタック' | 'お邪魔対戦'
 let targetWins = 1;
 let myWins = 0;
 let opponentWins = 0;
 
-let battleRole = '';
+let battleRole = ''; // 'host' (1P) | 'guest' (2P)
 let roomCode = '';
 let gameState = 'title';
 
 let shooterX = canvas.width / 2;
-let shooterY = canvas.height - 110;
+let shooterY = canvas.height - 120;
 let bulletX = shooterX;
 let bulletY = shooterY;
 let bulletVX = 0;
@@ -126,10 +126,12 @@ let particles = [];
 let fireworks = [];
 let battleWinner = '';
 
+// --- 💥 お邪魔玉演出用変数 ---
 let attackNoticeText = "";
 let attackNoticeTimer = 0;
 let shakeTimer = 0;
 
+// タイマー関連（ソロモード）
 const STAGE_TIME_LIMIT = 150;
 let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
@@ -185,9 +187,8 @@ function stopTimer() {
     }
 }
 
-function getRandomGridColor(excludeColor = null) {
-    let available = BASE_COLORS.filter(c => c !== excludeColor);
-    return available[Math.floor(Math.random() * available.length)];
+function getRandomGridColor() {
+    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
 }
 
 function getRandomShooterColor() {
@@ -223,14 +224,12 @@ function initGridForStage(stage) {
         }
     }
 
-    let fillRows = Math.min(ROWS - 4, 3 + Math.floor(stage * 0.5));
+    let fillRows = Math.min(ROWS - 4, 2 + Math.floor(stage * 0.6));
     for (let r = 0; r < fillRows; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] === null && Math.random() < 0.8) {
-                let leftColor = (c > 0) ? grid[r][c-1] : null;
-                let topColor = (r > 0 && grid[r-1][c]) ? grid[r-1][c] : null;
-                grid[r][c] = getRandomGridColor(leftColor === topColor ? leftColor : null);
+            if (grid[r][c] === null && Math.random() < 0.7) {
+                grid[r][c] = getRandomGridColor();
             }
         }
     }
@@ -252,8 +251,9 @@ function startSinglePlay() {
     showScreen('');
 }
 
+// 🌐 ネットワーク対戦（P1/P2区別機能）
 function setupRole(role) {
-    battleRole = role;
+    battleRole = role; // 'host' (1P) または 'guest' (2P)
     closeNetwork();
 
     if (role === 'host') {
@@ -421,39 +421,40 @@ function sendAttackToOpponent(amount) {
     }
 }
 
-// 💥 改良型お邪魔玉生成（連続して同色にならない変調ロジック）
+// 💥 お邪魔玉演出＆挿入（完全に安全かつ個別に色分けして押し下げ）
 function addOjamaBubbles(amount) {
     if (amount <= 0) return;
 
     attackNoticeText = `⚠️ WARNING! お邪魔玉 +${amount} ⚠️`;
-    attackNoticeTimer = 75;
-    shakeTimer = Math.min(shakeTimer + 12, 30);
+    attackNoticeTimer = 75; 
+    shakeTimer = Math.min(shakeTimer + 12, 30); 
+    
     playSE(se.bombExplode);
 
-    let lastInsertedColor = null;
-
     for (let i = 0; i < amount; i++) {
-        // 直前に追加した色と被らないよう厳格に色を選択
-        let newColor = getRandomGridColor(lastInsertedColor);
-        lastInsertedColor = newColor;
-
+        // 全行を1行ずつ下へシフト（行ごとの列数の違いを完全に考慮）
+        for (let r = ROWS - 1; r > 0; r--) {
+            let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
+            let prevCols = ((r - 1) % 2 === 0) ? COLS : COLS - 1;
+            for (let c = 0; c < currentCols; c++) {
+                if (c < prevCols) {
+                    grid[r][c] = grid[r - 1][c];
+                } else {
+                    grid[r][c] = null;
+                }
+            }
+        }
+        // 最上段にランダムな色のお邪魔玉を1つ配置（空いていればランダムな列）
         let emptyColsInTopRow = [];
         for (let c = 0; c < COLS; c++) {
             if (grid[0][c] === null) emptyColsInTopRow.push(c);
         }
-
         if (emptyColsInTopRow.length > 0) {
             let chosenCol = emptyColsInTopRow[Math.floor(Math.random() * emptyColsInTopRow.length)];
-            grid[0][chosenCol] = newColor;
+            grid[0][chosenCol] = getRandomGridColor();
         } else {
-            let targetCol = Math.floor(Math.random() * COLS);
-            for (let r = ROWS - 1; r > 0; r--) {
-                let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
-                if (targetCol < currentCols) {
-                    grid[r][targetCol] = grid[r - 1][targetCol];
-                }
-            }
-            grid[0][targetCol] = newColor;
+            let chosenCol = Math.floor(Math.random() * COLS);
+            grid[0][chosenCol] = getRandomGridColor();
         }
     }
     removeFloating();
@@ -612,14 +613,14 @@ function checkBattleSetEnd(roundWinner) {
             titleEl.innerText = "🏆 勝利！ WINNER!";
             titleEl.style.color = "#ffcc00";
             subEl.innerText = `勝利達成！ (${myWins}勝 - ${opponentWins}勝)`;
-            initWinParticles();
+            initWinParticles(); 
             if (loserControls) loserControls.style.display = 'none';
             if (winnerWait) winnerWait.style.display = 'block';
         } else {
             titleEl.innerText = "💀 敗北... LOSER";
             titleEl.style.color = "#ff4d4d";
             subEl.innerText = `対戦に敗北しました (${myWins}勝 - ${opponentWins}勝)`;
-            initLoseParticles();
+            initLoseParticles(); 
             if (loserControls) loserControls.style.display = 'flex';
             if (winnerWait) winnerWait.style.display = 'none';
         }
@@ -811,13 +812,40 @@ function showRankingBoard() {
     showScreen('screen-ranking');
 }
 
+// 🎯 **画面サイズとCanvas内部解像度を完全に一致させる座標補正関数**
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
     let clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
-    let scaleX = canvas.width / rect.width;
-    let scaleY = canvas.height / rect.height;
-    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+    
+    // object-fit: contain による実際の描画スケールとオフセットを正確に計算
+    let displayWidth = rect.width;
+    let displayHeight = rect.height;
+    let targetAspect = canvas.width / canvas.height;
+    let currentAspect = displayWidth / displayHeight;
+
+    let renderWidth, renderHeight, offsetX = 0, offsetY = 0;
+
+    if (currentAspect > targetAspect) {
+        renderHeight = displayHeight;
+        renderWidth = displayHeight * targetAspect;
+        offsetX = (displayWidth - renderWidth) / 2;
+    } else {
+        renderWidth = displayWidth;
+        renderHeight = displayWidth / targetAspect;
+        offsetY = (displayHeight - renderHeight) / 2;
+    }
+
+    let clickX = clientX - rect.left - offsetX;
+    let clickY = clientY - rect.top - offsetY;
+
+    let scaleX = canvas.width / renderWidth;
+    let scaleY = canvas.height / renderHeight;
+
+    return { 
+        x: clickX * scaleX, 
+        y: clickY * scaleY 
+    };
 }
 
 window.addEventListener('touchstart', (e) => {
@@ -840,9 +868,11 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
+        // 設定ボタン判定 (300 ~ 395, 5 ~ 75)
         if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
             openSettings(); return;
         }
+        // ボムボタン判定 (160 ~ 295, 5 ~ 75)
         if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
             if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
             return;
@@ -894,10 +924,9 @@ function releaseBullet() {
     pullX = 0; pullY = 0;
 }
 
-// 🎯 完全アラインされたグリッド座標計算 (キャンバス横幅400pxに完璧フィット)
 function getPixelCoords(r, c) {
     let offsetX = (r % 2 === 1) ? RADIUS : 0;
-    let x = c * DIAMETER + RADIUS + offsetX + 12; // 左右に各12pxのマージンを置くことで全端を等間隔整列
+    let x = c * DIAMETER + RADIUS + offsetX;
     let y = r * ROW_HEIGHT + RADIUS + TOP_MARGIN;
     return { x, y };
 }
@@ -1341,7 +1370,7 @@ function openSettings() {
         resetBtn.onclick = () => { delete customImages[col]; openSettings(); };
         
         let fileInput = document.createElement('input');
-        fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.style.display = 'none';
+        fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.display = 'none';
         fileInput.onchange = (e) => {
             let file = e.target.files[0];
             if (file) {
