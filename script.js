@@ -251,9 +251,8 @@ function startSinglePlay() {
     showScreen('');
 }
 
-// 🌐 ネットワーク対戦（P1/P2区別機能）
 function setupRole(role) {
-    battleRole = role; // 'host' (1P) または 'guest' (2P)
+    battleRole = role;
     closeNetwork();
 
     if (role === 'host') {
@@ -421,7 +420,7 @@ function sendAttackToOpponent(amount) {
     }
 }
 
-// 💥 お邪魔玉演出＆挿入（完全に安全かつ個別に色分けして押し下げ）
+// 💥 お邪魔玉挿入（要求された個数分だけ正確に1行ずつ上から追加）
 function addOjamaBubbles(amount) {
     if (amount <= 0) return;
 
@@ -431,8 +430,8 @@ function addOjamaBubbles(amount) {
     
     playSE(se.bombExplode);
 
+    // 受け取った数（amount）の回数分だけ、完全独立して1行ずつ下に押し下げる
     for (let i = 0; i < amount; i++) {
-        // 全行を1行ずつ下へシフト（行ごとの列数の違いを完全に考慮）
         for (let r = ROWS - 1; r > 0; r--) {
             let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
             let prevCols = ((r - 1) % 2 === 0) ? COLS : COLS - 1;
@@ -444,18 +443,9 @@ function addOjamaBubbles(amount) {
                 }
             }
         }
-        // 最上段にランダムな色のお邪魔玉を1つ配置（空いていればランダムな列）
-        let emptyColsInTopRow = [];
-        for (let c = 0; c < COLS; c++) {
-            if (grid[0][c] === null) emptyColsInTopRow.push(c);
-        }
-        if (emptyColsInTopRow.length > 0) {
-            let chosenCol = emptyColsInTopRow[Math.floor(Math.random() * emptyColsInTopRow.length)];
-            grid[0][chosenCol] = getRandomGridColor();
-        } else {
-            let chosenCol = Math.floor(Math.random() * COLS);
-            grid[0][chosenCol] = getRandomGridColor();
-        }
+        // 最上段に新しいお邪魔玉をランダムな色で1つ入れる
+        let chosenCol = Math.floor(Math.random() * COLS);
+        grid[0][chosenCol] = getRandomGridColor();
     }
     removeFloating();
     checkGameOverCondition();
@@ -812,39 +802,19 @@ function showRankingBoard() {
     showScreen('screen-ranking');
 }
 
-// 🎯 **画面サイズとCanvas内部解像度を完全に一致させる座標補正関数**
+// 🎯 **完璧な標準座標変換（PC・スマホ・余白のズレを完全解消）**
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
     let clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
     
-    // object-fit: contain による実際の描画スケールとオフセットを正確に計算
-    let displayWidth = rect.width;
-    let displayHeight = rect.height;
-    let targetAspect = canvas.width / canvas.height;
-    let currentAspect = displayWidth / displayHeight;
-
-    let renderWidth, renderHeight, offsetX = 0, offsetY = 0;
-
-    if (currentAspect > targetAspect) {
-        renderHeight = displayHeight;
-        renderWidth = displayHeight * targetAspect;
-        offsetX = (displayWidth - renderWidth) / 2;
-    } else {
-        renderWidth = displayWidth;
-        renderHeight = displayWidth / targetAspect;
-        offsetY = (displayHeight - renderHeight) / 2;
-    }
-
-    let clickX = clientX - rect.left - offsetX;
-    let clickY = clientY - rect.top - offsetY;
-
-    let scaleX = canvas.width / renderWidth;
-    let scaleY = canvas.height / renderHeight;
+    // 画面上の表示サイズからCanvas内部解像度（400x750）へ正確にスケーリング変換
+    let scaleX = canvas.width / rect.width;
+    let scaleY = canvas.height / rect.height;
 
     return { 
-        x: clickX * scaleX, 
-        y: clickY * scaleY 
+        x: (clientX - rect.left) * scaleX, 
+        y: (clientY - rect.top) * scaleY 
     };
 }
 
@@ -868,11 +838,11 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
-        // 設定ボタン判定 (300 ~ 395, 5 ~ 75)
+        // 設定ボタン判定
         if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
             openSettings(); return;
         }
-        // ボムボタン判定 (160 ~ 295, 5 ~ 75)
+        // ボムボタン判定
         if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
             if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
             return;
