@@ -66,8 +66,8 @@ function stopBGM() {
 }
 
 // --- 🎮 ゲーム基本パラメータ ---
-const ROWS = 15; // 縦長フィールドに拡張 (旧12 -> 15)
-const COLS = 8;  // 最大列数 (偶数行: 8列, 奇数行: 7列)
+const ROWS = 15; 
+const COLS = 8;  
 const RADIUS = 19;
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3);
@@ -79,7 +79,7 @@ const COLOR_NAMES = {
 };
 let customImages = {};
 const UNBREAKABLE_COLOR = '#fff';
-const TOP_MARGIN = 15; // 画面上部の余白をスリム化
+const TOP_MARGIN = 15;
 
 let grid = [];
 let score = 0;
@@ -92,11 +92,11 @@ let targetWins = 1;
 let myWins = 0;
 let opponentWins = 0;
 
-let battleRole = ''; // 'host' (1P) | 'guest' (2P)
+let battleRole = ''; // 'host' | 'guest'
 let roomCode = '';
 let gameState = 'title';
 
-let shooterX = 200; // フィールド中央(幅400の半分)
+let shooterX = 200; 
 let shooterY = canvas.height - 70;
 let bulletX = shooterX;
 let bulletY = shooterY;
@@ -126,24 +126,19 @@ let particles = [];
 let fireworks = [];
 let battleWinner = '';
 
-// --- 💥 飛来中のお邪魔玉アニメーション用配列 ---
 let flyingOjamaList = [];
-
-// --- 💥 お邪魔玉演出・制御用変数 ---
 let attackNoticeText = "";
 let attackNoticeTimer = 0;
 let shakeTimer = 0;
-let isProcessingAttack = false;
 
-// タイマー関連（ソロモード）
-const STAGE_TIME_LIMIT = 180; // 縦長化に伴い少し延長
+const STAGE_TIME_LIMIT = 180;
 let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
 let totalClearTime = 0;
 
 let peer = null;
 let conn = null;
-const PEER_PREFIX = 'pb-game-room-2026-v3-';
+const PEER_PREFIX = 'pb-game-room-2026-v4-';
 
 function showScreen(screenId) {
     document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
@@ -205,7 +200,6 @@ function initGridForStage(stage) {
     fallingBubbles = [];
     flashingBubbles = [];
     flyingOjamaList = [];
-    isProcessingAttack = false;
     
     for (let r = 0; r < ROWS; r++) {
         let row = [];
@@ -230,7 +224,7 @@ function initGridForStage(stage) {
         }
     }
 
-    let fillRows = Math.min(ROWS - 5, 2 + Math.floor(stage * 0.5));
+    let fillRows = Math.min(ROWS - 6, 2 + Math.floor(stage * 0.5));
     for (let r = 0; r < fillRows; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -273,7 +267,7 @@ function setupRole(role) {
             showScreen('screen-host-rule-setup');
         });
         peer.on('error', () => {
-            alert('接続エラーが発生しました（部屋IDが競合している可能性があります）');
+            alert('接続エラーが発生しました');
             showScreen('screen-role-select');
         });
     } else {
@@ -311,6 +305,8 @@ function setupConnectionListeners() {
     });
 
     conn.on('data', (data) => {
+        if (gameState !== 'playing') return;
+
         if (battleRole === 'guest') {
             if (data.type === 'show_rules') {
                 targetWins = data.targetWins;
@@ -321,9 +317,9 @@ function setupConnectionListeners() {
             } else if (data.type === 'sync_attack' && battleType === 'お邪魔対戦') {
                 launchOjamaProjectiles(data.amount);
             } else if (data.type === 'sync_round_end') {
-                myWins = data.myWins;
-                opponentWins = data.opponentWins;
-                checkBattleSetEnd(data.winner);
+                myWins = data.guestWins;
+                opponentWins = data.hostWins;
+                processRoundEndResult(data.roundWinner === 'GUEST' ? 'YOU' : 'OPPONENT');
             } else if (data.type === 'rematch') {
                 myWins = 0;
                 opponentWins = 0;
@@ -331,9 +327,10 @@ function setupConnectionListeners() {
             }
         } else {
             if (data.type === 'guest_request_attack' && battleType === 'お邪魔対戦') {
-                triggerHostAttackSync(data.amount);
+                launchOjamaProjectiles(data.amount);
+                if (conn && conn.open) conn.send({ type: 'sync_attack', amount: data.amount });
             } else if (data.type === 'guest_request_round_win') {
-                handleHostRoundDecide('OPPONENT');
+                triggerHostRoundDecide('GUEST');
             } else if (data.type === 'rematch') {
                 myWins = 0;
                 opponentWins = 0;
@@ -377,14 +374,9 @@ function confirmHostBattleStart() {
 function displayBattleRulesDesc() {
     let desc = "";
     if (battleType === 'タイムアタック') {
-        desc = `<b>【⏱️ タイムアタック】</b><br>` +
-               `画面上の消せる玉を相手より先にすべて消した方の勝利！<br><br>` +
-               `・勝利条件: ${targetWins}勝先取`;
+        desc = `<b>【⏱️ タイムアタック】</b><br>画面上の消せる玉を相手より先にすべて消した方の勝利！<br><br>・勝利条件: ${targetWins}勝先取`;
     } else {
-        desc = `<b>【⚔️ お邪魔対戦】</b><br>` +
-               `玉を消すと、消した個数分のお邪魔玉が相手の画面下から飛んできて付着！<br>` +
-               `（※お邪魔玉は同色でも3個以上で消えません）<br><br>` +
-               `・勝利条件: 相手を全滅させるか先に全消し (${targetWins}勝先取)`;
+        desc = `<b>【⚔️ お邪魔対戦】</b><br>玉を消すと、お邪魔玉が相手の画面下に飛来！<br><br>・勝利条件: 相手を全滅させるか先に全消し (${targetWins}勝先取)`;
     }
     document.getElementById('rules-text-content').innerHTML = desc;
     showScreen('screen-battle-rules-desc');
@@ -438,28 +430,15 @@ function startNextRound() {
     showScreen('');
 }
 
-// 💥 お邪魔玉送信・同期機構
 function requestAttackToOpponent(amount) {
     if (battleType !== 'お邪魔対戦' || amount <= 0) return;
     if (battleRole === 'host') {
-        if (conn && conn.open) {
-            conn.send({ type: 'sync_attack', amount: amount });
-        }
+        if (conn && conn.open) conn.send({ type: 'sync_attack', amount: amount });
     } else {
-        if (conn && conn.open) {
-            conn.send({ type: 'guest_request_attack', amount: amount });
-        }
+        if (conn && conn.open) conn.send({ type: 'guest_request_attack', amount: amount });
     }
 }
 
-function triggerHostAttackSync(amount) {
-    launchOjamaProjectiles(amount);
-    if (conn && conn.open) {
-        conn.send({ type: 'sync_attack', amount: amount });
-    }
-}
-
-// 💥 画面下（画面外）からお邪魔玉が飛んでくる演出と着弾処理
 function launchOjamaProjectiles(amount) {
     if (amount <= 0) return;
     let safeAmount = Math.min(amount, 10);
@@ -487,7 +466,6 @@ function launchOjamaProjectiles(amount) {
 }
 
 function applyOjamaToGrid(color) {
-    // 下部（ROWS-1）から上方向に向かって、空いている最も近いセルを探して定着させる
     let placed = false;
     for (let r = ROWS - 1; r >= 0; r--) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
@@ -501,7 +479,6 @@ function applyOjamaToGrid(color) {
         if (placed) break;
     }
 
-    // もしフィールドが完全に埋まってしまっている場合は一番上に無理やり押し込む
     if (!placed) {
         for (let c = 0; c < COLS; c++) {
             if (grid[0][c] === null) {
@@ -566,6 +543,7 @@ function resetBulletPos() {
 
 function checkClearCondition() {
     if (fallingBubbles.length > 0 || flashingBubbles.length > 0 || flyingOjamaList.length > 0) return;
+    if (gameState !== 'playing') return;
 
     let hasBreakable = false;
     for (let r = 0; r < grid.length; r++) {
@@ -583,8 +561,9 @@ function checkClearCondition() {
         playSE(se.stageClear);
         if (gameMode === 'battle') {
             if (battleRole === 'host') {
-                handleHostRoundDecide('YOU');
+                triggerHostRoundDecide('HOST');
             } else {
+                gameState = 'round_ended';
                 if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
             }
         } else {
@@ -615,69 +594,51 @@ function triggerSoloGameOver(msg) {
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
 
-    let limitRow = ROWS - 1; 
-
-    for (let r = limitRow; r < ROWS; r++) {
-        let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let cc = 0; cc < rowCols; cc++) {
-            if (grid[r][cc] !== null) {
-                if (gameMode === 'battle') {
-                    stopBGM();
-                    if (battleRole === 'host') {
-                        handleHostRoundDecide('OPPONENT');
-                    } else {
-                        if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
-                    }
+    let r = ROWS - 1;
+    let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
+    for (let cc = 0; cc < rowCols; cc++) {
+        if (grid[r][cc] !== null) {
+            if (gameMode === 'battle') {
+                stopBGM();
+                if (battleRole === 'host') {
+                    triggerHostRoundDecide('GUEST');
                 } else {
-                    triggerSoloGameOver(`ステージ ${currentStage} で終了`);
+                    gameState = 'round_ended';
+                    if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
                 }
-                return;
+            } else {
+                triggerSoloGameOver(`ステージ ${currentStage} で終了`);
             }
+            return;
         }
     }
 }
 
-function handleHostRoundDecide(roundWinnerRole) {
-    if (battleRole !== 'host' || (gameState !== 'playing' && gameState !== 'stage_clear_menu')) return;
+function triggerHostRoundDecide(roundWinner) {
+    if (battleRole !== 'host') return;
+    gameState = 'round_ended';
 
-    if (roundWinnerRole === 'YOU') {
+    if (roundWinner === 'HOST') {
         myWins++;
     } else {
         opponentWins++;
     }
 
-    let setWinner = null;
-    if (myWins >= targetWins) setWinner = 'YOU';
-    else if (opponentWins >= targetWins) setWinner = 'OPPONENT';
-
-    // 修正：ゲスト側へ送る勝敗データと判定を正しくマッピング
     if (conn && conn.open) {
         conn.send({
             type: 'sync_round_end',
-            myWins: myWins,
-            opponentWins: opponentWins,
-            winner: roundWinnerRole === 'YOU' ? 'OPPONENT' : 'YOU'
+            hostWins: myWins,
+            guestWins: opponentWins,
+            roundWinner: roundWinner
         });
     }
 
-    checkBattleSetEnd(roundWinnerRole);
+    processRoundEndResult(roundWinner === 'HOST' ? 'YOU' : 'OPPONENT');
 }
 
-function handleTimeOutGameOver() {
-    triggerSoloGameOver(`タイムアップ！ (ステージ ${currentStage})`);
-}
-
-function checkSoloGameOverRankIn() {
-    if (checkRankIn()) {
-        promptNameInput();
-    } else {
-        returnToTitle();
-    }
-}
-
-function checkBattleSetEnd(roundWinner) {
+function processRoundEndResult(winnerRole) {
     if (myWins >= targetWins || opponentWins >= targetWins) {
-        battleWinner = myWins >= targetWins ? 'YOU' : 'OPPONENT';
+        battleWinner = (winnerRole === 'YOU') ? 'YOU' : 'OPPONENT';
         gameState = 'battle_result';
         stopBGM();
         playSE(se.gameOver);
@@ -705,9 +666,13 @@ function checkBattleSetEnd(roundWinner) {
 
         showScreen('screen-battle-result');
     } else {
-        alert(`ラウンド終了！ 判定: ${roundWinner === 'YOU' ? 'あなたの勝ち' : '相手の勝ち'}\n現在: あなた ${myWins}勝 - 相手 ${opponentWins}勝`);
+        alert(`ラウンド終了！ 判定: ${winnerRole === 'YOU' ? 'あなたの勝ち' : '相手の勝ち'}\n現在: あなた ${myWins}勝 - 相手 ${opponentWins}勝`);
         startNextRound();
     }
+}
+
+function handleTimeOutGameOver() {
+    triggerSoloGameOver(`タイムアップ！ (ステージ ${currentStage})`);
 }
 
 function requestRematch() {
@@ -847,15 +812,6 @@ function saveRanking(name, stageVal, timeVal, scoreVal) {
     try {
         localStorage.setItem('pb_rankings_v3', JSON.stringify(list));
     } catch(e) {}
-}
-
-function checkRankIn() {
-    let list = getRankings();
-    if (list.length < 5) return true;
-    let last = list[list.length - 1];
-    if (currentStage > last.stage) return true;
-    if (currentStage === last.stage && score > last.score) return true;
-    return false;
 }
 
 function promptNameInput() {
@@ -1409,7 +1365,7 @@ function drawTitleBackground() {
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    ctx.fillText("Ver 1.02", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.03", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
 
