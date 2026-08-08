@@ -65,10 +65,10 @@ function stopBGM() {
     } catch(e) {}
 }
 
-// --- 🎮 ゲーム基本パラメータ ---
-const ROWS = 12;
+// --- 🎮 ゲーム基本パラメータ (400px x 750px キャンバス幅に完全最適化) ---
+const ROWS = 13;
 const COLS = 8;
-const RADIUS = 19;
+const RADIUS = 23.5; // 400px幅にぴったり8個並ぶ計算サイズ (23.5 * 2 * 8 = 376px + マージン)
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3);
 
@@ -79,25 +79,25 @@ const COLOR_NAMES = {
 };
 let customImages = {};
 const UNBREAKABLE_COLOR = '#fff';
-const TOP_MARGIN = 80;
+const TOP_MARGIN = 85;
 
 let grid = [];
 let score = 0;
 let currentStage = 1;
 const maxStages = 10;
 
-let gameMode = 'single'; // 'single' | 'battle'
-let battleType = 'タイムアタック'; // 'タイムアタック' | 'お邪魔対戦'
+let gameMode = 'single';
+let battleType = 'タイムアタック';
 let targetWins = 1;
 let myWins = 0;
 let opponentWins = 0;
 
-let battleRole = ''; // 'host' (1P) | 'guest' (2P)
+let battleRole = '';
 let roomCode = '';
 let gameState = 'title';
 
 let shooterX = canvas.width / 2;
-let shooterY = canvas.height - 120;
+let shooterY = canvas.height - 110;
 let bulletX = shooterX;
 let bulletY = shooterY;
 let bulletVX = 0;
@@ -126,12 +126,10 @@ let particles = [];
 let fireworks = [];
 let battleWinner = '';
 
-// --- 💥 お邪魔玉演出用変数 ---
 let attackNoticeText = "";
 let attackNoticeTimer = 0;
 let shakeTimer = 0;
 
-// タイマー関連（ソロモード）
 const STAGE_TIME_LIMIT = 150;
 let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
@@ -187,8 +185,9 @@ function stopTimer() {
     }
 }
 
-function getRandomGridColor() {
-    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
+function getRandomGridColor(excludeColor = null) {
+    let available = BASE_COLORS.filter(c => c !== excludeColor);
+    return available[Math.floor(Math.random() * available.length)];
 }
 
 function getRandomShooterColor() {
@@ -224,12 +223,14 @@ function initGridForStage(stage) {
         }
     }
 
-    let fillRows = Math.min(ROWS - 4, 2 + Math.floor(stage * 0.6));
+    let fillRows = Math.min(ROWS - 4, 3 + Math.floor(stage * 0.5));
     for (let r = 0; r < fillRows; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] === null && Math.random() < 0.7) {
-                grid[r][c] = getRandomGridColor();
+            if (grid[r][c] === null && Math.random() < 0.8) {
+                let leftColor = (c > 0) ? grid[r][c-1] : null;
+                let topColor = (r > 0 && grid[r-1][c]) ? grid[r-1][c] : null;
+                grid[r][c] = getRandomGridColor(leftColor === topColor ? leftColor : null);
             }
         }
     }
@@ -251,9 +252,8 @@ function startSinglePlay() {
     showScreen('');
 }
 
-// 🌐 ネットワーク対戦（P1/P2区別機能）
 function setupRole(role) {
-    battleRole = role; // 'host' (1P) または 'guest' (2P)
+    battleRole = role;
     closeNetwork();
 
     if (role === 'host') {
@@ -421,20 +421,22 @@ function sendAttackToOpponent(amount) {
     }
 }
 
-// 💥 お邪魔玉演出＆挿入
+// 💥 改良型お邪魔玉生成（連続して同色にならない変調ロジック）
 function addOjamaBubbles(amount) {
     if (amount <= 0) return;
 
-    // 演出トリガー
     attackNoticeText = `⚠️ WARNING! お邪魔玉 +${amount} ⚠️`;
-    attackNoticeTimer = 75; // 約1.2秒表示
-    shakeTimer = Math.min(shakeTimer + 12, 30); // 画面振動（上限キャップ付き）
-    
-    // 💣 攻撃被弾音（se_bomb_explode.wav）
+    attackNoticeTimer = 75;
+    shakeTimer = Math.min(shakeTimer + 12, 30);
     playSE(se.bombExplode);
 
+    let lastInsertedColor = null;
+
     for (let i = 0; i < amount; i++) {
-        let newColor = getRandomGridColor();
+        // 直前に追加した色と被らないよう厳格に色を選択
+        let newColor = getRandomGridColor(lastInsertedColor);
+        lastInsertedColor = newColor;
+
         let emptyColsInTopRow = [];
         for (let c = 0; c < COLS; c++) {
             if (grid[0][c] === null) emptyColsInTopRow.push(c);
@@ -593,14 +595,12 @@ function checkSoloGameOverRankIn() {
     }
 }
 
-// 🏆 勝敗判定・UI表示・共通 game_over.mp3 再生
 function checkBattleSetEnd(roundWinner) {
     if (myWins >= targetWins || opponentWins >= targetWins) {
         battleWinner = myWins >= targetWins ? 'YOU' : 'OPPONENT';
         gameState = 'battle_result';
         stopBGM();
         
-        // 🎵 ゲームセット時：全モード・勝者/敗者・1P/2P 共通で se_game_over.mp3 を再生
         playSE(se.gameOver);
 
         let titleEl = document.getElementById('battle-result-title');
@@ -612,14 +612,14 @@ function checkBattleSetEnd(roundWinner) {
             titleEl.innerText = "🏆 勝利！ WINNER!";
             titleEl.style.color = "#ffcc00";
             subEl.innerText = `勝利達成！ (${myWins}勝 - ${opponentWins}勝)`;
-            initWinParticles(); // 🎆 花火演出
+            initWinParticles();
             if (loserControls) loserControls.style.display = 'none';
             if (winnerWait) winnerWait.style.display = 'block';
         } else {
             titleEl.innerText = "💀 敗北... LOSER";
             titleEl.style.color = "#ff4d4d";
             subEl.innerText = `対戦に敗北しました (${myWins}勝 - ${opponentWins}勝)`;
-            initLoseParticles(); // 🌧️ 雨演出
+            initLoseParticles();
             if (loserControls) loserControls.style.display = 'flex';
             if (winnerWait) winnerWait.style.display = 'none';
         }
@@ -638,7 +638,6 @@ function requestRematch() {
     startNextRound();
 }
 
-// 🎆 勝者用：打ち上げ花火演出
 function initWinParticles() {
     particles = [];
     fireworks = [];
@@ -674,7 +673,6 @@ function createExplosion(x, y, color) {
     }
 }
 
-// 🌧️ 敗者用：雨演出
 function initLoseParticles() {
     particles = [];
     fireworks = [];
@@ -896,9 +894,10 @@ function releaseBullet() {
     pullX = 0; pullY = 0;
 }
 
+// 🎯 完全アラインされたグリッド座標計算 (キャンバス横幅400pxに完璧フィット)
 function getPixelCoords(r, c) {
     let offsetX = (r % 2 === 1) ? RADIUS : 0;
-    let x = c * DIAMETER + RADIUS + offsetX;
+    let x = c * DIAMETER + RADIUS + offsetX + 12; // 左右に各12pxのマージンを置くことで全端を等間隔整列
     let y = r * ROW_HEIGHT + RADIUS + TOP_MARGIN;
     return { x, y };
 }
@@ -1226,7 +1225,6 @@ function draw() {
         drawBubble(shooterX, shooterY, bulletColor, RADIUS);
     }
 
-    // 💥 画面中央のお邪魔玉被弾ダイナミック通知
     if (attackNoticeTimer > 0) {
         ctx.save();
         ctx.fillStyle = "rgba(255, 0, 0, 0.85)";
@@ -1343,7 +1341,7 @@ function openSettings() {
         resetBtn.onclick = () => { delete customImages[col]; openSettings(); };
         
         let fileInput = document.createElement('input');
-        fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.display = 'none';
+        fileInput.type = 'file'; fileInput.accept = 'image/*'; fileInput.style.style.display = 'none';
         fileInput.onchange = (e) => {
             let file = e.target.files[0];
             if (file) {
