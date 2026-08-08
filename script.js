@@ -650,12 +650,13 @@ function handleHostRoundDecide(roundWinnerRole) {
     if (myWins >= targetWins) setWinner = 'YOU';
     else if (opponentWins >= targetWins) setWinner = 'OPPONENT';
 
+    // 修正：ゲスト側へ送る勝敗データと判定を正しくマッピング
     if (conn && conn.open) {
         conn.send({
             type: 'sync_round_end',
-            myWins: opponentWins,
-            opponentWins: myWins,
-            winner: roundWinnerRole
+            myWins: myWins,
+            opponentWins: opponentWins,
+            winner: roundWinnerRole === 'YOU' ? 'OPPONENT' : 'YOU'
         });
     }
 
@@ -930,14 +931,11 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
-        // 右側サイドパネルのボタン判定（X: 300 〜 395 付近）
         if (pos.x >= 305 && pos.x <= 395) {
             if (pos.y >= 310 && pos.y <= 385) {
-                // ボムボタン
                 if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
                 return;
             } else if (pos.y >= 405 && pos.y <= 465) {
-                // 設定ボタン
                 openSettings();
                 return;
             }
@@ -1033,7 +1031,6 @@ function findCellForPosition(x, y) {
     return { r: bestR, c: bestC };
 }
 
-// 🛡️ お邪魔玉（isOjama: true）は同色であっても消えないよう除外する判定
 function findConnected(r, c, color, visited = new Set()) {
     let key = `${r},${c}`;
     let colsInRow = (r >= 0 && r < ROWS) ? ((r % 2 === 0) ? COLS : COLS - 1) : 0;
@@ -1101,7 +1098,6 @@ function update() {
     if (attackNoticeTimer > 0) attackNoticeTimer--;
     if (shakeTimer > 0) shakeTimer--;
 
-    // 飛来中のお邪魔玉の更新処理
     for (let i = flyingOjamaList.length - 1; i >= 0; i--) {
         let oj = flyingOjamaList[i];
         oj.y += oj.vy;
@@ -1143,7 +1139,7 @@ function update() {
                 bulletX = RADIUS; 
                 bulletVX *= -1; 
                 stepVX *= -1;
-            } else if (bulletX + RADIUS >= 305) { // 右側サイドパネル(X:305〜)の壁で反射
+            } else if (bulletX + RADIUS >= 305) {
                 bulletX = 305 - RADIUS; 
                 bulletVX *= -1; 
                 stepVX *= -1;
@@ -1269,14 +1265,12 @@ function draw() {
         ctx.translate(offsetX, offsetY);
     }
 
-    // --- 🖥️ 右側サイドパネルの描画（UIをすべて右側に集約） ---
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(305, 0, 95, canvas.height);
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(305, 0); ctx.lineTo(305, canvas.height); ctx.stroke();
 
-    // ステータス・モード・スコア（右側上部）
     ctx.fillStyle = "#fff";
     ctx.font = "bold 11px sans-serif";
     if (gameMode === 'battle') {
@@ -1300,13 +1294,11 @@ function draw() {
     ctx.font = "bold 12px sans-serif";
     ctx.fillText(`${score}`, 312, 116);
 
-    // NEXT表示
     ctx.fillStyle = "#aaa";
     ctx.font = "bold 11px sans-serif";
     ctx.fillText("NEXT", 336, 162);
     drawBubble(352, 202, nextColor, 17);
 
-    // ボム玉ボタン
     let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
     ctx.fillStyle = btnBg;
     ctx.beginPath(); ctx.roundRect(312, 310, 80, 75, 10); ctx.fill();
@@ -1318,7 +1310,6 @@ function draw() {
     ctx.fillText("💣ボム", 352, 342);
     ctx.fillText(`(${bombUsesLeft})`, 352, 364);
 
-    // 設定ボタン
     ctx.fillStyle = "#333";
     ctx.beginPath(); ctx.roundRect(312, 405, 80, 60, 10); ctx.fill();
     ctx.strokeStyle = "#888"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
@@ -1328,7 +1319,6 @@ function draw() {
     ctx.fillText("⚙️ 設定", 352, 440);
     ctx.textAlign = "left";
 
-    // --- 🟢 グリッド玉の描画 ---
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -1338,7 +1328,6 @@ function draw() {
                 if (cell.color === UNBREAKABLE_COLOR) drawUnbreakableBubble(pos.x, pos.y, RADIUS);
                 else {
                     drawBubble(pos.x, pos.y, cell.color, RADIUS);
-                    // お邪魔玉の場合は中央に分かりやすいマークを表示
                     if (cell.isOjama) {
                         ctx.fillStyle = "#ff3333";
                         ctx.font = "bold 11px sans-serif";
@@ -1353,7 +1342,6 @@ function draw() {
         }
     }
 
-    // 点滅アニメーション玉
     for (let fb of flashingBubbles) {
         let phase = Math.floor(fb.timer / 10);
         let flashColor = (phase === 1) ? "#ff0000" : "#ffffff";
@@ -1364,10 +1352,8 @@ function draw() {
         }
     }
 
-    // 落下中の玉
     for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS);
 
-    // 飛来中のお邪魔玉
     for (let oj of flyingOjamaList) {
         drawBubble(oj.x, oj.y, oj.color, RADIUS);
         ctx.fillStyle = "#ff3333";
@@ -1379,7 +1365,6 @@ function draw() {
         ctx.textBaseline = "alphabetic";
     }
 
-    // 発射コントロール（引っ張り・シュート）
     if (isDragging) {
         let pullDist = Math.hypot(pullX, pullY);
         if (pullDist > 8) {
