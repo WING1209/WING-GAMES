@@ -94,6 +94,15 @@
             50% { opacity: 0.2; transform: scale(0.95); }
         }
 
+        /* Ver表記用のスタイルを追加 */
+        .version-text {
+            font-size: 14px;
+            color: #ffffff;
+            margin-top: 15px;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+
         .menu-btn {
             background: #ffcc00;
             color: #111;
@@ -167,9 +176,11 @@
     <div id="game-container">
         <canvas id="gameCanvas" width="400" height="750"></canvas>
 
+        <!-- タイトル画面：スタート文字の下にVer1.02を追加 -->
         <div id="screen-title" class="overlay-screen" style="display:flex; cursor:pointer;" onclick="goToHowToPlay()">
             <div class="title-logo">○o WING GAME玉 o○</div>
             <div class="blink-text">- START (画面をタップ) -</div>
+            <div class="version-text">Ver1.02</div>
         </div>
 
         <div id="screen-how-to-play" class="overlay-screen">
