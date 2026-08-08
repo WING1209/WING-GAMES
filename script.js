@@ -113,7 +113,7 @@ let flashingBubbles = [];
 let particles = [];
 let battleWinner = '';
 
-// タイマー関連（ソロモード 1ステージ150秒リセット）
+// タイマー関連（ソロモード：1ステージ150秒スタート）
 const STAGE_TIME_LIMIT = 150;
 let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
@@ -133,7 +133,6 @@ function showScreen(screenId) {
             gameState = 'title';
             stopBGM();
             stopTimer();
-            // ロゴアニメーション再再生用
             let logo = target.querySelector('.title-logo');
             if (logo) {
                 logo.style.animation = 'none';
@@ -416,7 +415,7 @@ function nextStageAction() {
         totalClearTime += (STAGE_TIME_LIMIT - remainingTime);
         currentStage++;
         bombUsesLeft = 2;
-        remainingTime = STAGE_TIME_LIMIT;
+        remainingTime = STAGE_TIME_LIMIT; // ステージごとに150秒リセット
         initGridForStage(currentStage);
         spawnBullet();
         gameState = 'playing';
@@ -427,7 +426,7 @@ function nextStageAction() {
 
 function retryStage() {
     bombUsesLeft = 2;
-    remainingTime = STAGE_TIME_LIMIT;
+    remainingTime = STAGE_TIME_LIMIT; // リトライ時も150秒リセット
     initGridForStage(currentStage);
     spawnBullet();
     gameState = 'playing';
@@ -497,10 +496,12 @@ function checkClearCondition() {
     }
 }
 
+// 🎯 ゲームオーバー判定（打ち出し位置から玉1つ分上のライン ROWS - 3 に達したら終了）
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
 
-    let limitRow = ROWS - 3;
+    let limitRow = ROWS - 3; // デッドライン（打ち出し位置より玉1つ分上）
+
     for (let r = limitRow; r < ROWS; r++) {
         let rowCols = (r % 2 === 0) ? COLS : COLS - 1;
         for (let cc = 0; cc < rowCols; cc++) {
@@ -1123,7 +1124,7 @@ function drawGameClearScreen() {
     ctx.font = "bold 18px sans-serif";
     ctx.fillStyle = "#ffffff";
     ctx.fillText(`ALL STAGE CLEAR!`, canvas.width / 2, canvas.height / 2 + 10);
-    ctx.fillText(`TIME: ${totalClearTime}s / SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 45);
+    ctx.fillText(`TIME: ${totalClearTime}秒 / SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 45);
 
     ctx.font = "14px sans-serif";
     ctx.fillStyle = "#4da6ff";
