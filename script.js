@@ -126,10 +126,11 @@ let particles = [];
 let fireworks = [];
 let battleWinner = '';
 
-// --- 💥 お邪魔玉演出用変数 ---
+// --- 💥 お邪魔玉演出・制御用変数 ---
 let attackNoticeText = "";
 let attackNoticeTimer = 0;
 let shakeTimer = 0;
+let isProcessingAttack = false; // お邪魔玉の多重発火を防ぐためのガードフラグ
 
 // タイマー関連（ソロモード）
 const STAGE_TIME_LIMIT = 150;
@@ -200,6 +201,7 @@ function initGridForStage(stage) {
     grid = [];
     fallingBubbles = [];
     flashingBubbles = [];
+    isProcessingAttack = false;
     
     for (let r = 0; r < ROWS; r++) {
         let row = [];
@@ -420,18 +422,22 @@ function sendAttackToOpponent(amount) {
     }
 }
 
-// 💥 お邪魔玉挿入（要求された個数分だけ正確に1行ずつ上から追加）
+// 💥 お邪魔玉の大量発生・多重トリガーを完全防止する安全設計関数
 function addOjamaBubbles(amount) {
-    if (amount <= 0) return;
+    if (amount <= 0 || isProcessingAttack) return;
+    isProcessingAttack = true;
 
-    attackNoticeText = `⚠️ WARNING! お邪魔玉 +${amount} ⚠️`;
+    // 安全のため上限を制限（万が一の過剰データにも対応）
+    let safeAmount = Math.min(amount, 6);
+
+    attackNoticeText = `⚠️ お邪魔玉 +${safeAmount} 到着！`;
     attackNoticeTimer = 75; 
     shakeTimer = Math.min(shakeTimer + 12, 30); 
     
     playSE(se.bombExplode);
 
-    // 受け取った数（amount）の回数分だけ、完全独立して1行ずつ下に押し下げる
-    for (let i = 0; i < amount; i++) {
+    // 受け取った数（safeAmount）の回数分だけ下へシフトし、最上段に1個ずつ追加
+    for (let i = 0; i < safeAmount; i++) {
         for (let r = ROWS - 1; r > 0; r--) {
             let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
             let prevCols = ((r - 1) % 2 === 0) ? COLS : COLS - 1;
@@ -443,12 +449,16 @@ function addOjamaBubbles(amount) {
                 }
             }
         }
-        // 最上段に新しいお邪魔玉をランダムな色で1つ入れる
         let chosenCol = Math.floor(Math.random() * COLS);
         grid[0][chosenCol] = getRandomGridColor();
     }
+    
     removeFloating();
     checkGameOverCondition();
+    
+    setTimeout(() => {
+        isProcessingAttack = false;
+    }, 150);
 }
 
 function retryStage() {
@@ -802,20 +812,22 @@ function showRankingBoard() {
     showScreen('screen-ranking');
 }
 
-// 🎯 **完璧な標準座標変換（PC・スマホ・余白のズレを完全解消）**
+// 📱 スマートフォンブラウザ対応の正確な座標スケーリング
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
     let clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
     
-    // 画面上の表示サイズからCanvas内部解像度（400x750）へ正確にスケーリング変換
     let scaleX = canvas.width / rect.width;
     let scaleY = canvas.height / rect.height;
 
-    return { 
-        x: (clientX - rect.left) * scaleX, 
-        y: (clientY - rect.top) * scaleY 
-    };
+    let x = (clientX - rect.left) * scaleX;
+    let y = (clientY - rect.top) * scaleY;
+
+    x = Math.max(0, Math.min(canvas.width, x));
+    y = Math.max(0, Math.min(canvas.height, y));
+
+    return { x, y };
 }
 
 window.addEventListener('touchstart', (e) => {
@@ -838,11 +850,9 @@ function handleInputStart(pos) {
     }
 
     if (gameState === 'playing' && !isMoving) {
-        // 設定ボタン判定
         if (pos.x >= 300 && pos.x <= 395 && pos.y >= 5 && pos.y <= 75) {
             openSettings(); return;
         }
-        // ボムボタン判定
         if (pos.x >= 160 && pos.x <= 295 && pos.y >= 5 && pos.y <= 75) {
             if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
             return;
@@ -1079,7 +1089,7 @@ function snapBullet() {
                     }
                 }
                 triggerFlashEffect(flashList, flashList.length * 40);
-                if (flashList.length > 0) sendAttackToOpponent(flashList.length);
+                if (flashList.length > 0) sendAttackToOpponent(Math.min(flashList.length, 3));
             } else if (bulletColor === SPECIAL_RAINBOW) {
                 playSE(se.rainbowLand);
                 let targetColor = null;
@@ -1105,7 +1115,7 @@ function snapBullet() {
                     }
                     score += clearedCount * 30;
                     let floatCount = removeFloating();
-                    sendAttackToOpponent(clearedCount + floatCount);
+                    sendAttackToOpponent(Math.min(clearedCount + floatCount, 4));
                 }
             } else {
                 playSE(se.ballLand);
@@ -1118,7 +1128,9 @@ function snapBullet() {
                         grid[m.r][m.c] = null; score += 10;
                     }
                     let floatCount = removeFloating();
-                    sendAttackToOpponent(matches.length + floatCount);
+                    // 消した数に応じた攻撃量（最大3個までに制限してバランスを保持）
+                    let attackAmount = Math.min(Math.floor(matches.length / 3) + Math.floor(floatCount / 2), 3);
+                    if (attackAmount > 0) sendAttackToOpponent(attackAmount);
                 }
             }
         }
@@ -1245,6 +1257,15 @@ function draw() {
 function drawTitleBackground() {
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // タイトル画面に追加された Ver 1.01 の描画処理
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.font = "bold 13px sans-serif";
+    ctx.fillStyle = "#888888";
+    // スタート表示の少し下側に配置
+    ctx.fillText("Ver 1.01", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.restore();
 }
 
 function drawGameClearScreen() {
