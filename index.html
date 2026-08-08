@@ -94,7 +94,6 @@
             50% { opacity: 0.2; transform: scale(0.95); }
         }
 
-        /* Ver表記用のスタイルを追加 */
         .version-text {
             font-size: 14px;
             color: #ffffff;
@@ -176,7 +175,6 @@
     <div id="game-container">
         <canvas id="gameCanvas" width="400" height="750"></canvas>
 
-        <!-- タイトル画面：スタート文字の下にVer1.02を追加 -->
         <div id="screen-title" class="overlay-screen" style="display:flex; cursor:pointer;" onclick="goToHowToPlay()">
             <div class="title-logo">○o WING GAME玉 o○</div>
             <div class="blink-text">- START (画面をタップ) -</div>
@@ -190,7 +188,7 @@
                 ・玉を<b>引っ張って狙いを定め、離してショット！</b><br>
                 ・同じ色の玉を<b>3つ以上連結</b>させると消せます。<br><br>
                 <b>【特殊玉を活用しよう】</b><br>
-                ・<b>💣 ボム玉</b>: 右上ボタンでセット！着弾点の周囲をまとめて爆破。<br>
+                ・<b>💣 ボム玉</b>: 右側のボムボタンでセット！着弾点の周囲をまとめて爆破。<br>
                 ・<b>★ レインボー玉</b>: 当たった玉と同じ色の玉を全消し！
             </div>
             <button class="menu-btn" onclick="showScreen('screen-mode')">次へ進む ➔</button>
