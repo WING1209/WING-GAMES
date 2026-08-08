@@ -67,7 +67,7 @@ function stopBGM() {
 
 // --- 🎮 ゲーム基本パラメータ ---
 const ROWS = 12;
-const COLS = 8;
+const COLS = 8; // 最大列数 (偶数行: 8列, 奇数行: 7列)
 const RADIUS = 19;
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3);
@@ -130,7 +130,7 @@ let battleWinner = '';
 let attackNoticeText = "";
 let attackNoticeTimer = 0;
 let shakeTimer = 0;
-let isProcessingAttack = false; // お邪魔玉の多重発火を防ぐためのガードフラグ
+let isProcessingAttack = false;
 
 // タイマー関連（ソロモード）
 const STAGE_TIME_LIMIT = 150;
@@ -140,7 +140,7 @@ let totalClearTime = 0;
 
 let peer = null;
 let conn = null;
-const PEER_PREFIX = 'pb-game-room-2026-v2-';
+const PEER_PREFIX = 'pb-game-room-2026-v3-';
 
 function showScreen(screenId) {
     document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
@@ -269,7 +269,7 @@ function setupRole(role) {
             showScreen('screen-host-rule-setup');
         });
         peer.on('error', () => {
-            alert('接続エラーが発生しました');
+            alert('接続エラーが発生しました（部屋IDが競合している可能性があります）');
             showScreen('screen-role-select');
         });
     } else {
@@ -307,27 +307,39 @@ function setupConnectionListeners() {
     });
 
     conn.on('data', (data) => {
-        if (data.type === 'show_rules') {
-            targetWins = data.targetWins;
-            battleType = data.battleType;
-            displayBattleRulesDesc();
-        } else if (data.type === 'ready_start') {
-            executeBattleStart();
-        } else if (data.type === 'attack' && battleType === 'お邪魔対戦') {
-            addOjamaBubbles(data.amount);
-        } else if (data.type === 'round_result') {
-            let iWon = (data.winner === battleRole);
-            if (iWon) {
-                myWins++;
-                checkBattleSetEnd('YOU');
-            } else {
-                opponentWins++;
-                checkBattleSetEnd('OPPONENT');
+        if (battleRole === 'guest') {
+            // ゲストがホストから命令を受けるデータ受信
+            if (data.type === 'show_rules') {
+                targetWins = data.targetWins;
+                battleType = data.battleType;
+                displayBattleRulesDesc();
+            } else if (data.type === 'ready_start') {
+                executeBattleStart();
+            } else if (data.type === 'sync_attack' && battleType === 'お邪魔対戦') {
+                applyOjamaBubblesDirect(data.amount);
+            } else if (data.type === 'sync_round_end') {
+                myWins = data.myWins;
+                opponentWins = data.opponentWins;
+                checkBattleSetEnd(data.winner);
+            } else if (data.type === 'rematch') {
+                myWins = 0;
+                opponentWins = 0;
+                startNextRound();
             }
-        } else if (data.type === 'rematch') {
-            myWins = 0;
-            opponentWins = 0;
-            startNextRound();
+        } else {
+            // ホストがゲストからのアクションを受けるデータ受信
+            if (data.type === 'guest_request_attack' && battleType === 'お邪魔対戦') {
+                // ホストがゲストの代わりに判定して全体にお邪魔を反映し、両者に同期する
+                triggerHostAttackSync(data.amount);
+            } else if (data.type === 'guest_request_round_win') {
+                // ゲストが先にクリア/勝ちになった時、ホスト側で勝敗を決着させる
+                handleHostRoundDecide('OPPONENT');
+            } else if (data.type === 'rematch') {
+                myWins = 0;
+                opponentWins = 0;
+                if (conn && conn.open) conn.send({ type: 'rematch' });
+                startNextRound();
+            }
         }
     });
 
@@ -378,8 +390,10 @@ function displayBattleRulesDesc() {
 }
 
 function readyToStartBattle() {
-    if (conn && conn.open) conn.send({ type: 'ready_start' });
-    executeBattleStart();
+    if (battleRole === 'host') {
+        if (conn && conn.open) conn.send({ type: 'ready_start' });
+        executeBattleStart();
+    }
 }
 
 function executeBattleStart() {
@@ -397,10 +411,17 @@ function executeBattleStart() {
 }
 
 function closeNetwork() {
-    if (conn) conn.close();
-    if (peer) peer.destroy();
-    conn = null;
-    peer = null;
+    if (conn) {
+        try { conn.close(); } catch(e) {}
+        conn = null;
+    }
+    if (peer) {
+        try {
+            peer.disconnect();
+            peer.destroy();
+        } catch(e) {}
+        peer = null;
+    }
 }
 
 function cancelNetwork(nextScreen) {
@@ -416,18 +437,34 @@ function startNextRound() {
     showScreen('');
 }
 
-function sendAttackToOpponent(amount) {
-    if (conn && conn.open && battleType === 'お邪魔対戦' && amount > 0) {
-        conn.send({ type: 'attack', amount: amount });
+// 💥 お邪魔玉送信・同期機構（ホスト一元管理）
+function requestAttackToOpponent(amount) {
+    if (battleType !== 'お邪魔対戦' || amount <= 0) return;
+    if (battleRole === 'host') {
+        // ホスト自身の攻撃：自分が受けるわけではないので、相手に送り込む
+        if (conn && conn.open) {
+            conn.send({ type: 'sync_attack', amount: amount });
+        }
+    } else {
+        // ゲストからの攻撃：ホストに依頼して同期してもらう
+        if (conn && conn.open) {
+            conn.send({ type: 'guest_request_attack', amount: amount });
+        }
     }
 }
 
-// 💥 お邪魔玉の大量発生・多重トリガーを完全防止する安全設計関数
-function addOjamaBubbles(amount) {
+function triggerHostAttackSync(amount) {
+    // ホストがお邪魔発生を受け取り、自分側の画面でお邪魔玉を加えつつゲストにも指示を飛ばす
+    applyOjamaBubblesDirect(amount);
+    if (conn && conn.open) {
+        conn.send({ type: 'sync_attack', amount: amount });
+    }
+}
+
+function applyOjamaBubblesDirect(amount) {
     if (amount <= 0 || isProcessingAttack) return;
     isProcessingAttack = true;
 
-    // 安全のため上限を制限（万が一の過剰データにも対応）
     let safeAmount = Math.min(amount, 6);
 
     attackNoticeText = `⚠️ お邪魔玉 +${safeAmount} 到着！`;
@@ -436,7 +473,6 @@ function addOjamaBubbles(amount) {
     
     playSE(se.bombExplode);
 
-    // 受け取った数（safeAmount）の回数分だけ下へシフトし、最上段に1個ずつ追加
     for (let i = 0; i < safeAmount; i++) {
         for (let r = ROWS - 1; r > 0; r--) {
             let currentCols = (r % 2 === 0) ? COLS : COLS - 1;
@@ -528,11 +564,11 @@ function checkClearCondition() {
     if (!hasBreakable) {
         playSE(se.stageClear);
         if (gameMode === 'battle') {
-            myWins++;
-            if (conn && conn.open) {
-                conn.send({ type: 'round_result', winner: battleRole });
+            if (battleRole === 'host') {
+                handleHostRoundDecide('YOU');
+            } else {
+                if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
             }
-            checkBattleSetEnd('YOU');
         } else {
             if (currentStage < maxStages) {
                 gameState = 'stage_clear_menu';
@@ -569,12 +605,13 @@ function checkGameOverCondition() {
             if (grid[r][cc] !== null) {
                 if (gameMode === 'battle') {
                     stopBGM();
-                    opponentWins++;
-                    let opponentRole = (battleRole === 'host') ? 'guest' : 'host';
-                    if (conn && conn.open) {
-                        conn.send({ type: 'round_result', winner: opponentRole });
+                    if (battleRole === 'host') {
+                        // ホスト自身が負け＝ゲストの勝ち
+                        handleHostRoundDecide('OPPONENT');
+                    } else {
+                        // ゲストが負けた場合、ホストにラウンド負け(ホスト勝ち)を要求
+                        if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
                     }
-                    checkBattleSetEnd('OPPONENT');
                 } else {
                     triggerSoloGameOver(`ステージ ${currentStage} で終了`);
                 }
@@ -582,6 +619,32 @@ function checkGameOverCondition() {
             }
         }
     }
+}
+
+// 👑 対戦の勝敗判定をホストが一元管理して同期する関数
+function handleHostRoundDecide(roundWinnerRole) {
+    if (battleRole !== 'host' || (gameState !== 'playing' && gameState !== 'stage_clear_menu')) return;
+
+    if (roundWinnerRole === 'YOU') {
+        myWins++;
+    } else {
+        opponentWins++;
+    }
+
+    let setWinner = null;
+    if (myWins >= targetWins) setWinner = 'YOU';
+    else if (opponentWins >= targetWins) setWinner = 'OPPONENT';
+
+    if (conn && conn.open) {
+        conn.send({
+            type: 'sync_round_end',
+            myWins: opponentWins,     // 相手(ゲスト)から見たmyWins
+            opponentWins: myWins,     // 相手から見たopponentWins
+            winner: roundWinnerRole
+        });
+    }
+
+    checkBattleSetEnd(roundWinnerRole);
 }
 
 function handleTimeOutGameOver() {
@@ -601,7 +664,6 @@ function checkBattleSetEnd(roundWinner) {
         battleWinner = myWins >= targetWins ? 'YOU' : 'OPPONENT';
         gameState = 'battle_result';
         stopBGM();
-        
         playSE(se.gameOver);
 
         let titleEl = document.getElementById('battle-result-title');
@@ -633,10 +695,14 @@ function checkBattleSetEnd(roundWinner) {
 }
 
 function requestRematch() {
-    if (conn && conn.open) conn.send({ type: 'rematch' });
-    myWins = 0;
-    opponentWins = 0;
-    startNextRound();
+    if (battleRole === 'host') {
+        myWins = 0;
+        opponentWins = 0;
+        if (conn && conn.open) conn.send({ type: 'rematch' });
+        startNextRound();
+    } else {
+        if (conn && conn.open) conn.send({ type: 'rematch' });
+    }
 }
 
 function initWinParticles() {
@@ -753,7 +819,7 @@ function drawParticles() {
 
 function getRankings() {
     try {
-        return JSON.parse(localStorage.getItem('pb_rankings_v2') || '[]');
+        return JSON.parse(localStorage.getItem('pb_rankings_v3') || '[]');
     } catch(e) { return []; }
 }
 
@@ -763,7 +829,7 @@ function saveRanking(name, stageVal, timeVal, scoreVal) {
     list.sort((a, b) => b.stage - a.stage || b.score - a.score || a.time - b.time);
     list = list.slice(0, 5);
     try {
-        localStorage.setItem('pb_rankings_v2', JSON.stringify(list));
+        localStorage.setItem('pb_rankings_v3', JSON.stringify(list));
     } catch(e) {}
 }
 
@@ -812,7 +878,6 @@ function showRankingBoard() {
     showScreen('screen-ranking');
 }
 
-// 📱 スマートフォンブラウザ対応の正確な座標スケーリング
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
@@ -911,16 +976,24 @@ function getPixelCoords(r, c) {
     return { x, y };
 }
 
+// 🎯 【修正】右上のセル・壁際への正確なスナップ・当たり判定補正
 function findCellForPosition(x, y) {
     let bestR = 0, bestC = 0, minDist = Infinity;
+    
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
             let pos = getPixelCoords(r, c);
             let dist = Math.hypot(x - pos.x, y - pos.y);
-            if (dist < minDist) { minDist = dist; bestR = r; bestC = c; }
+            if (dist < minDist) {
+                minDist = dist;
+                bestR = r;
+                bestC = c;
+            }
         }
     }
+
+    // もし見つかった最寄りのセルにすでに玉がある場合、空いている最寄りセルを探す
     if (grid[bestR][bestC] !== null) {
         let altMinDist = Infinity, altR = bestR, altC = bestC;
         for (let r = 0; r < ROWS; r++) {
@@ -929,7 +1002,11 @@ function findCellForPosition(x, y) {
                 if (grid[r][c] === null) {
                     let pos = getPixelCoords(r, c);
                     let dist = Math.hypot(x - pos.x, y - pos.y);
-                    if (dist < altMinDist) { altMinDist = dist; altR = r; altC = c; }
+                    if (dist < altMinDist) {
+                        altMinDist = dist;
+                        altR = r;
+                        altC = c;
+                    }
                 }
             }
         }
@@ -940,7 +1017,8 @@ function findCellForPosition(x, y) {
 
 function findConnected(r, c, color, visited = new Set()) {
     let key = `${r},${c}`;
-    if (visited.has(key) || r < 0 || r >= ROWS || c < 0) return [];
+    let colsInRow = (r >= 0 && r < ROWS) ? ((r % 2 === 0) ? COLS : COLS - 1) : 0;
+    if (visited.has(key) || r < 0 || r >= ROWS || c < 0 || c >= colsInRow) return [];
     if (grid[r][c] !== color || grid[r][c] === UNBREAKABLE_COLOR) return [];
 
     visited.add(key);
@@ -1089,7 +1167,7 @@ function snapBullet() {
                     }
                 }
                 triggerFlashEffect(flashList, flashList.length * 40);
-                if (flashList.length > 0) sendAttackToOpponent(Math.min(flashList.length, 3));
+                if (flashList.length > 0) requestAttackToOpponent(Math.min(flashList.length, 3));
             } else if (bulletColor === SPECIAL_RAINBOW) {
                 playSE(se.rainbowLand);
                 let targetColor = null;
@@ -1115,7 +1193,7 @@ function snapBullet() {
                     }
                     score += clearedCount * 30;
                     let floatCount = removeFloating();
-                    sendAttackToOpponent(Math.min(clearedCount + floatCount, 4));
+                    requestAttackToOpponent(Math.min(clearedCount + floatCount, 4));
                 }
             } else {
                 playSE(se.ballLand);
@@ -1128,9 +1206,8 @@ function snapBullet() {
                         grid[m.r][m.c] = null; score += 10;
                     }
                     let floatCount = removeFloating();
-                    // 消した数に応じた攻撃量（最大3個までに制限してバランスを保持）
                     let attackAmount = Math.min(Math.floor(matches.length / 3) + Math.floor(floatCount / 2), 3);
-                    if (attackAmount > 0) sendAttackToOpponent(attackAmount);
+                    if (attackAmount > 0) requestAttackToOpponent(attackAmount);
                 }
             }
         }
@@ -1258,13 +1335,11 @@ function drawTitleBackground() {
     ctx.fillStyle = "#1a1a1a";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // タイトル画面に追加された Ver 1.01 の描画処理
     ctx.save();
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    // スタート表示の少し下側に配置
-    ctx.fillText("Ver 1.01", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.02", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
 
@@ -1335,6 +1410,7 @@ function drawUnbreakableBubble(x, y, r) {
     ctx.strokeStyle = "#ff3333"; ctx.lineWidth = 2.5; ctx.stroke(); ctx.closePath();
 }
 
+// 🖼️ 【修正】画像カスタム時のリサイズ（軽量化・メモリ圧迫防止）処理追加
 function openSettings() {
     let listContainer = document.getElementById('settings-list');
     listContainer.innerHTML = '';
@@ -1368,7 +1444,22 @@ function openSettings() {
                 let reader = new FileReader();
                 reader.onload = (event) => {
                     let img = new Image();
-                    img.onload = () => { customImages[col] = img; openSettings(); };
+                    img.onload = () => {
+                        let tempCanvas = document.createElement('canvas');
+                        let maxDim = 128;
+                        let w = img.width, h = img.height;
+                        if (w > h) { if (w > maxDim) { h *= maxDim / w; w = maxDim; } }
+                        else { if (h > maxDim) { w *= maxDim / h; h = maxDim; } }
+                        tempCanvas.width = w; tempCanvas.height = h;
+                        let tCtx = tempCanvas.getContext('2d');
+                        tCtx.drawImage(img, 0, 0, w, h);
+                        let resizedImg = new Image();
+                        resizedImg.onload = () => {
+                            customImages[col] = resizedImg;
+                            openSettings();
+                        };
+                        resizedImg.src = tempCanvas.toDataURL('image/jpeg', 0.85);
+                    };
                     img.src = event.target.result;
                 };
                 reader.readAsDataURL(file);
