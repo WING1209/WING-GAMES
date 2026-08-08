@@ -123,6 +123,12 @@ let peer = null;
 let conn = null;
 const PEER_PREFIX = 'pb-game-room-2026-v2-';
 
+function handleTitleBgmOnLogoSettled() {
+    if (gameState === 'title') {
+        playRandomBGM();
+    }
+}
+
 function showScreen(screenId) {
     document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
     if (screenId === '') return;
@@ -138,13 +144,33 @@ function showScreen(screenId) {
                 logo.style.animation = 'none';
                 logo.offsetHeight; /* trigger reflow */
                 logo.style.animation = null;
+                
+                // アニメーション完了後にBGM再生（アニメーションが無効・即時定位置の場合は fallback で直接再生）
+                const onAnimationEnd = () => {
+                    logo.removeEventListener('animationend', onAnimationEnd);
+                    handleTitleBgmOnLogoSettled();
+                };
+                logo.addEventListener('animationend', onAnimationEnd);
+                
+                // 万が一 animationend が発火しない環境のためのフォールバック
+                setTimeout(() => {
+                    if (gameState === 'title' && !currentBGM) {
+                        handleTitleBgmOnLogoSettled();
+                    }
+                }, 1000);
+            } else {
+                handleTitleBgmOnLogoSettled();
             }
+        } else {
+            // タイトル画面以外へ移る場合はタイトルBGMを停止
+            stopBGM();
         }
     }
 }
 
 function goToHowToPlay() {
     if (gameState === 'title') {
+        stopBGM();
         showScreen('screen-how-to-play');
     }
 }
@@ -218,6 +244,7 @@ function initGridForStage(stage) {
 
 // --- ソロモード開始 ---
 function startSinglePlay() {
+    stopBGM();
     closeNetwork();
     gameMode = 'single';
     gameState = 'playing';
@@ -235,6 +262,7 @@ function startSinglePlay() {
 
 // 🌐 ネットワーク & フレンド対戦フロー
 function setupRole(role) {
+    stopBGM();
     battleRole = role;
     closeNetwork();
 
@@ -360,6 +388,7 @@ function readyToStartBattle() {
 }
 
 function executeBattleStart() {
+    stopBGM();
     gameMode = 'battle';
     gameState = 'playing';
     score = 0;
