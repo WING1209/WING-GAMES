@@ -133,7 +133,6 @@ let flyingOjamaList = [];
 let attackNoticeText = "";
 let attackNoticeTimer = 0;
 let shakeTimer = 0;
-let isProcessingAttack = false;
 
 // タイマー関連（ソロモード）
 const STAGE_TIME_LIMIT = 180; 
@@ -205,7 +204,6 @@ function initGridForStage(stage) {
     fallingBubbles = [];
     flashingBubbles = [];
     flyingOjamaList = [];
-    isProcessingAttack = false;
     
     for (let r = 0; r < ROWS; r++) {
         let row = [];
@@ -330,9 +328,15 @@ function setupConnectionListeners() {
                 startNextRound();
             }
         } else {
+            // ホスト側がゲストから受け取る通信
             if (data.type === 'guest_request_attack' && battleType === 'お邪魔対戦') {
-                triggerHostAttackSync(data.amount);
-            } else if (data.type === 'guest_request_round_win') {
+                launchOjamaProjectiles(data.amount);
+                // ホストからも相手にお邪魔玉を送り返す同期（必要なら）
+                if (conn && conn.open) conn.send({ type: 'sync_attack', amount: data.amount });
+            } else if (data.type === 'guest_game_over') {
+                // ゲストがゲームオーバーになった＝ホストのラウンド勝ち
+                handleHostRoundDecide('YOU');
+            } else if (data.type === 'guest_request_round_win' && battleType === 'タイムアタック') {
                 handleHostRoundDecide('OPPONENT');
             } else if (data.type === 'rematch') {
                 myWins = 0;
@@ -425,11 +429,6 @@ function closeNetwork() {
     }
 }
 
-function cancelNetwork(nextScreen) {
-    closeNetwork();
-    showScreen(nextScreen);
-}
-
 function startNextRound() {
     bombUsesLeft = 2;
     initGridForStage(1);
@@ -438,7 +437,7 @@ function startNextRound() {
     showScreen('');
 }
 
-// 💥 お邪魔玉送信・同期機構
+// 💥 お邪魔玉の送信処理
 function requestAttackToOpponent(amount) {
     if (battleType !== 'お邪魔対戦' || amount <= 0) return;
     if (battleRole === 'host') {
@@ -449,13 +448,6 @@ function requestAttackToOpponent(amount) {
         if (conn && conn.open) {
             conn.send({ type: 'guest_request_attack', amount: amount });
         }
-    }
-}
-
-function triggerHostAttackSync(amount) {
-    launchOjamaProjectiles(amount);
-    if (conn && conn.open) {
-        conn.send({ type: 'sync_attack', amount: amount });
     }
 }
 
@@ -580,7 +572,7 @@ function checkClearCondition() {
     if (!hasBreakable) {
         playSE(se.stageClear);
         if (gameMode === 'battle') {
-            // お邪魔対戦のときは「全消しによる勝利判定」を行わないようにする
+            // お邪魔対戦のときは全消し勝利を無効化。タイムアタックのみ全消し＝勝ち
             if (battleType === 'タイムアタック') {
                 if (battleRole === 'host') {
                     handleHostRoundDecide('YOU');
@@ -624,11 +616,18 @@ function checkGameOverCondition() {
             if (grid[r][cc] !== null) {
                 if (gameMode === 'battle') {
                     stopBGM();
+                    gameState = 'gameover_menu'; // 二重判定を防ぐため先にステータス変更
+                    
                     if (battleRole === 'host') {
-                        // 対戦モードで溢れた場合、自分（ホスト視点）が負け、相手が勝ち
+                        // ホスト自身が溢れた → 相手（ゲスト）のラウンド勝ち
                         handleHostRoundDecide('OPPONENT');
                     } else {
-                        if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
+                        // ゲスト自身が溢れた → ホストに「自分が負けた」ことを通知
+                        if (conn && conn.open) {
+                            conn.send({ type: 'guest_game_over' });
+                        }
+                        // ゲスト視点での敗北画面を表示
+                        triggerSoloGameOver("ラウンド敗北... (玉が溢れました)");
                     }
                 } else {
                     triggerSoloGameOver(`ステージ ${currentStage} で終了`);
@@ -640,7 +639,7 @@ function checkGameOverCondition() {
 }
 
 function handleHostRoundDecide(roundWinnerRole) {
-    if (battleRole !== 'host' || (gameState !== 'playing' && gameState !== 'stage_clear_menu')) return;
+    if (battleRole !== 'host') return;
 
     if (roundWinnerRole === 'YOU') {
         myWins++;
@@ -648,37 +647,30 @@ function handleHostRoundDecide(roundWinnerRole) {
         opponentWins++;
     }
 
-    let setWinner = null;
-    if (myWins >= targetWins) setWinner = 'YOU';
-    else if (opponentWins >= targetWins) setWinner = 'OPPONENT';
-
     if (conn && conn.open) {
         conn.send({
             type: 'sync_round_end',
             myWins: myWins,
             opponentWins: opponentWins,
-            winner: roundWinnerRole === 'YOU' ? 'OPPONENT' : 'YOU'
+            winner: roundWinnerRole === 'YOU' ? 'YOU' : 'OPPONENT'
         });
     }
 
-    checkBattleSetEnd(roundWinnerRole);
+    checkBattleSetEnd(roundWinnerRole === 'YOU' ? 'YOU' : 'OPPONENT');
 }
 
 function handleTimeOutGameOver() {
     triggerSoloGameOver(`タイムアップ！ (ステージ ${currentStage})`);
 }
 
-function checkSoloGameOverRankIn() {
-    if (checkRankIn()) {
-        promptNameInput();
-    } else {
-        returnToTitle();
-    }
-}
-
 function checkBattleSetEnd(roundWinner) {
     if (myWins >= targetWins || opponentWins >= targetWins) {
-        battleWinner = myWins >= targetWins ? 'YOU' : 'OPPONENT';
+        battleWinner = (battleRole === 'host' && myWins >= targetWins) || (battleRole === 'guest' && roundWinner === 'YOU') ? 'YOU' : 'OPPONENT';
+        // ゲスト側の勝利判定微調整
+        if (battleRole === 'guest') {
+            battleWinner = (opponentWins >= targetWins) ? 'OPPONENT' : 'YOU';
+        }
+        
         gameState = 'battle_result';
         stopBGM();
         playSE(se.gameOver);
@@ -706,19 +698,8 @@ function checkBattleSetEnd(roundWinner) {
 
         showScreen('screen-battle-result');
     } else {
-        alert(`ラウンド終了！ 判定: ${roundWinner === 'YOU' ? 'あなたの勝ち' : '相手の勝ち'}\n現在: あなた ${myWins}勝 - 相手 ${opponentWins}勝`);
+        alert(`ラウンド終了！\n現在: あなた ${myWins}勝 - 相手 ${opponentWins}勝`);
         startNextRound();
-    }
-}
-
-function requestRematch() {
-    if (battleRole === 'host') {
-        myWins = 0;
-        opponentWins = 0;
-        if (conn && conn.open) conn.send({ type: 'rematch' });
-        startNextRound();
-    } else {
-        if (conn && conn.open) conn.send({ type: 'rematch' });
     }
 }
 
@@ -832,67 +813,6 @@ function drawParticles() {
             ctx.closePath();
         }
     }
-}
-
-function getRankings() {
-    try {
-        return JSON.parse(localStorage.getItem('pb_rankings_v3') || '[]');
-    } catch(e) { return []; }
-}
-
-function saveRanking(name, stageVal, timeVal, scoreVal) {
-    let list = getRankings();
-    list.push({ name: name || 'NO NAME', stage: stageVal, time: timeVal, score: scoreVal });
-    list.sort((a, b) => b.stage - a.stage || b.score - a.score || a.time - b.time);
-    list = list.slice(0, 5);
-    try {
-        localStorage.setItem('pb_rankings_v3', JSON.stringify(list));
-    } catch(e) {}
-}
-
-function checkRankIn() {
-    let list = getRankings();
-    if (list.length < 5) return true;
-    let last = list[list.length - 1];
-    if (currentStage > last.stage) return true;
-    if (currentStage === last.stage && score > last.score) return true;
-    return false;
-}
-
-function promptNameInput() {
-    let timeVal = (gameState === 'gameclear') ? totalClearTime : (totalClearTime + (STAGE_TIME_LIMIT - remainingTime));
-    document.getElementById('rankin-desc-text').innerText = `到達: STAGE ${currentStage} / タイム: ${timeVal}秒 / スコア: ${score}`;
-    showScreen('screen-name-input');
-}
-
-function submitScoreAndShowRanking() {
-    let name = document.getElementById('player-name-input').value.trim();
-    let timeVal = (gameState === 'gameclear') ? totalClearTime : (totalClearTime + (STAGE_TIME_LIMIT - remainingTime));
-    saveRanking(name, currentStage, timeVal, score);
-    returnToTitle();
-}
-
-function showRankingBoard() {
-    let list = getRankings();
-    let tbody = document.getElementById('ranking-list-body');
-    tbody.innerHTML = '';
-    
-    if (list.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="color:#888;">データがありません</td></tr>';
-    } else {
-        list.forEach((item, idx) => {
-            let tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td style="font-weight:bold; color:#ffcc00;">${idx + 1}位</td>
-                <td>${item.name}</td>
-                <td>ST${item.stage}</td>
-                <td>${item.time}秒</td>
-                <td>${item.score}pt</td>
-            `;
-            tbody.appendChild(tr);
-        });
-    }
-    showScreen('screen-ranking');
 }
 
 function getTouchPos(e) {
@@ -1410,7 +1330,7 @@ function drawTitleBackground() {
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    ctx.fillText("Ver 1.02", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.03", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
 
