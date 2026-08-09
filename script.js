@@ -75,7 +75,7 @@ const ROW_HEIGHT = RADIUS * Math.sqrt(3);
 const BASE_COLORS = ['#ff4d4d', '#4da6ff', '#4dff4d', '#ffff4d', '#ff4dda'];
 const COLOR_NAMES = {
     '#ff4d4d': '赤の玉', '#4da6ff': '青の玉', '#4dff4d': '緑の玉',
-    '#ffff4d': '黄色の玉', '#ff4dda': 'ピンクの玉', 'SPECIAL_BOMB': 'ボム玉(💣)', 'SPECIAL_MYSTERY': '？玉(❓)'
+    '#ffff4d': '黄色の玉', '#ff4dda': 'ピンクの玉', 'SPECIAL_BOMB': 'ボム玉(💣)'
 };
 let customImages = {};
 const UNBREAKABLE_COLOR = '#fff';
@@ -83,7 +83,6 @@ const TOP_MARGIN = 15;
 
 const SPECIAL_RAINBOW = 'SPECIAL_RAINBOW';
 const SPECIAL_BOMB = 'SPECIAL_BOMB';
-const SPECIAL_MYSTERY = 'SPECIAL_MYSTERY';
 
 let grid = [];
 let score = 0;
@@ -125,8 +124,8 @@ let bulletY = shooterY;
 let bulletVX = 0;
 let bulletVY = 0;
 
-let bulletColor = getRandomShooterColor();
-let nextColor = getRandomShooterColor();
+let bulletData = getRandomShooterBubble();
+let nextBubble = getRandomShooterBubble();
 let bombUsesLeft = 2;
 
 let isDragging = false;
@@ -241,14 +240,32 @@ function forceTimeoutTurnEnd() {
     switchTurnToOpponent();
 }
 
-function getRandomGridColor() {
-    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
+function getRandomGridCell() {
+    let color = BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
+    let isMystery = false;
+    if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
+        // 3ターンに1回（約33%）の確率で「？」の内部抽選
+        if (Math.random() < (1 / 3)) {
+            isMystery = true;
+        }
+    }
+    return { color: color, isOjama: false, isMystery: isMystery };
 }
 
-function getRandomShooterColor() {
-    if (gameMode === 'battle' && battleType === 'お邪魔対戦' && Math.random() < 0.12) return SPECIAL_MYSTERY;
-    if (Math.random() < 0.08) return SPECIAL_RAINBOW;
-    return BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
+function getRandomShooterBubble() {
+    let isMystery = false;
+    if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
+        if (Math.random() < (1 / 3)) {
+            isMystery = true;
+        }
+    }
+
+    if (Math.random() < 0.08) return { color: SPECIAL_RAINBOW, isOjama: false, isMystery: false };
+    return {
+        color: BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)],
+        isOjama: false,
+        isMystery: isMystery
+    };
 }
 
 function initGridForStage(stage) {
@@ -276,7 +293,7 @@ function initGridForStage(stage) {
             let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
             let c = Math.floor(Math.random() * colsInRow);
             if (grid[r][c] === null) {
-                grid[r][c] = { color: UNBREAKABLE_COLOR, isOjama: false };
+                grid[r][c] = { color: UNBREAKABLE_COLOR, isOjama: false, isMystery: false };
                 placed++;
             }
         }
@@ -287,11 +304,7 @@ function initGridForStage(stage) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
             if (grid[r][c] === null && Math.random() < 0.7) {
-                let cellColor = getRandomGridColor();
-                if (gameMode === 'battle' && battleType === 'お邪魔対戦' && Math.random() < 0.10) {
-                    cellColor = SPECIAL_MYSTERY;
-                }
-                grid[r][c] = { color: cellColor, isOjama: false };
+                grid[r][c] = getRandomGridCell();
             }
         }
     }
@@ -452,9 +465,9 @@ function confirmHostBattleStart() {
 function displayBattleRulesDesc() {
     let desc = "";
     if (battleType === 'タイムアタック') {
-        desc = `<b>【⏱️ タイムアタック】</b><br>画面上の消せる玉を相手より先にすべて消した方の勝利！<br><br>・勝利条件: ${targetWins}勝先取`;
+        desc = `<b>【⏱️ タイムアタック】</b><br>画面上の消せる玉を相手より先にすべて消した方の勝利！<br><br>• 勝利条件: ${targetWins}勝先取`;
     } else {
-        desc = `<b>【⚔️ ターン制お邪魔対戦】</b><br>じゃんけんで先攻後攻を決定！交互に玉を打ちます。<br>「？」玉を消すとアイテムルーレットが発生し、4種の強力なアイテムを獲得できます。<br><br>・勝利条件: ${targetWins}勝先取`;
+        desc = `<b>【⚔️ ターン制お邪魔対戦】</b><br>じゃんけんで先攻後攻を決定！交互に玉を打ちます。<br>3ターンに1回ランダム出現する「？」付きの玉を消すとアイテムルーレットが発生！<br><br>• 勝利条件: ${targetWins}勝先取`;
     }
     document.getElementById('rules-text-content').innerHTML = desc;
     showScreen('screen-battle-rules-desc');
@@ -646,9 +659,6 @@ function startBattleRoundLoop() {
     if (currentTurnPlayer === battleRole) {
         battleTurnState = 'my_turn';
         startTurnTimer();
-        
-        // アイテム②（1回休み）が自分に適用されていたかのチェック処理
-        // 相手のターンから自分のターンに移った直後
     } else {
         battleTurnState = 'opponent_turn';
     }
@@ -663,7 +673,6 @@ function executeOpponentAction(data) {
     let activeItemUsed = data.activeItemUsed;
     let actualOjama = data.ojamaAmount;
 
-    // アイテム③（跳ね返し×2）が発動されていた場合、飛来するお邪魔玉が倍増する
     if (activeItemUsed === 2 && actualOjama > 0) {
         actualOjama *= 2;
     }
@@ -671,12 +680,10 @@ function executeOpponentAction(data) {
     if (actualOjama > 0) {
         launchOjamaProjectilesFromBottom(actualOjama);
     } else {
-        // アイテム②（1回休み）が相手によって使用された場合
         if (activeItemUsed === 1) {
             opponentTurnNoticeText = "💤 1回休み！ 相手の連続ターンです";
             opponentTurnNoticeTimer = 90;
             playSE(se.bombExplode);
-            // 相手がもう一度自分のターンを行うため、こちらは opponent_turn を継続
             return;
         }
 
@@ -744,7 +751,6 @@ function stopItemRoulette() {
     isRouletteActive = false;
     playSE(se.ballLand);
 
-    // ゲット処理（上限1回：既に持っていても増えない）
     if (!hasItem[rouletteItemIndex]) {
         hasItem[rouletteItemIndex] = true;
     }
@@ -817,33 +823,28 @@ function handleColorChangeSelection(col) {
         let targetColor = col;
         document.getElementById('colorchange-overlay').style.display = 'none';
         
-        // 実行：画面上の指定色をすべて変更先のカラーに一斉変換
-        let changedCount = 0;
         for (let r = 0; r < ROWS; r++) {
             let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
             for (let c = 0; c < colsInRow; c++) {
                 let cell = grid[r][c];
                 if (cell !== null && cell.color === colorChangeSourceColor) {
                     grid[r][c].color = targetColor;
-                    changedCount++;
                 }
             }
         }
         playSE(se.rainbowLand);
-        hasItem[3] = false; // 消費
+        hasItem[3] = false;
         activeItem = null;
     }
 }
 
-// --- アイテムボタンクリック処理 ---
 function clickItemButton(idx) {
     if (gameMode !== 'battle' || battleType !== 'お邪魔対戦' || battleTurnState !== 'my_turn') return;
-    if (isMoving) return; // 発射してからのタップは無効
-
+    if (isMoving) return;
     if (!hasItem[idx]) return;
 
     if (activeItem === idx) {
-        activeItem = null; // 再度押したら解除
+        activeItem = null;
         return;
     }
 
@@ -853,7 +854,6 @@ function clickItemButton(idx) {
     }
 }
 
-// 💥 下から飛来して、上の空きマスに綺麗に定着する演出（iPhoneでのすり抜け・右端ズレ完全防止版）
 function launchOjamaProjectilesFromBottom(amount) {
     if (amount <= 0) return;
     let safeAmount = Math.min(amount, 10);
@@ -867,7 +867,7 @@ function launchOjamaProjectilesFromBottom(amount) {
         setTimeout(() => {
             let startX = Math.random() * 220 + 40;
             let startY = canvas.height + 40; 
-            let color = getRandomGridColor(); 
+            let gridCell = getRandomGridCell(); 
             
             let targetCoords = findLowestAvailableGridCoords();
             let targetPos = getPixelCoords(targetCoords.r, targetCoords.c);
@@ -878,7 +878,7 @@ function launchOjamaProjectilesFromBottom(amount) {
                 targetY: targetPos.y,
                 targetR: targetCoords.r,
                 targetC: targetCoords.c,
-                color: color,
+                cellData: gridCell,
                 vy: -(8 + Math.random() * 2) 
             });
         }, i * 120);
@@ -897,13 +897,13 @@ function findLowestAvailableGridCoords() {
     return { r: 0, c: 0 };
 }
 
-function applyOjamaToGrid(color, targetR, targetC) {
+function applyOjamaToGrid(cellData, targetR, targetC) {
     let placed = false;
 
     if (targetR >= 0 && targetR < ROWS) {
         let colsInRow = (targetR % 2 === 0) ? COLS : COLS - 1;
         if (targetC >= 0 && targetC < colsInRow && grid[targetR][targetC] === null) {
-            grid[targetR][targetC] = { color: color, isOjama: true };
+            grid[targetR][targetC] = { color: cellData.color, isOjama: true, isMystery: cellData.isMystery };
             placed = true;
         }
     }
@@ -913,7 +913,7 @@ function applyOjamaToGrid(color, targetR, targetC) {
             let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
             for (let c = 0; c < colsInRow; c++) {
                 if (grid[r][c] === null) {
-                    grid[r][c] = { color: color, isOjama: true };
+                    grid[r][c] = { color: cellData.color, isOjama: true, isMystery: cellData.isMystery };
                     placed = true;
                     break;
                 }
@@ -960,9 +960,9 @@ function returnToTitle() {
 }
 
 function spawnBullet() {
-    bulletColor = nextColor;
-    nextColor = getRandomShooterColor();
-    if (bulletColor === SPECIAL_RAINBOW) playSE(se.rainbowSet);
+    bulletData = nextBubble;
+    nextBubble = getRandomShooterBubble();
+    if (bulletData.color === SPECIAL_RAINBOW) playSE(se.rainbowSet);
     resetBulletPos();
     isMoving = false;
 }
@@ -1273,9 +1273,7 @@ window.addEventListener('touchstart', (e) => {
     unlockAudio();
     let pos = getTouchPos(e);
 
-    // 画面右下のアイテムボタン（4つ）のタッチ判定
     if (gameMode === 'battle' && battleType === 'お邪魔対戦' && battleTurnState === 'my_turn') {
-        // 右下余白付近: Xが 305 ~ 400 付近、Yが 380 ~ 600 付近
         if (pos.x >= 305 && pos.x <= 400 && pos.y >= 380 && pos.y <= 600) {
             let relY = pos.y - 380;
             let btnH = 50;
@@ -1339,7 +1337,10 @@ function handleInputStart(pos) {
 
         if (pos.x >= 305 && pos.x <= 395) {
             if (pos.y >= 310 && pos.y <= 375) {
-                if (bombUsesLeft > 0) { bulletColor = SPECIAL_BOMB; bombUsesLeft--; }
+                if (bombUsesLeft > 0) {
+                    bulletData = { color: SPECIAL_BOMB, isOjama: false, isMystery: false };
+                    bombUsesLeft--;
+                }
                 return;
             } else if (pos.y >= 540 && pos.y <= 595) {
                 openSettings();
@@ -1473,12 +1474,11 @@ function removeFloating() {
         for (let c = 0; c < colsInRow; c++) {
             let cell = grid[r][c];
             if (cell !== null && !visited.has(`${r},${c}`)) {
-                let color = cell.color;
+                let cellData = cell;
                 let pos = getPixelCoords(r, c);
-                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: color });
+                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: cellData.color, isMystery: cellData.isMystery });
                 
-                // 落下した玉の中に「？」玉が含まれていた場合、アイテムルーレットをトリガー
-                if (color === SPECIAL_MYSTERY) {
+                if (cellData.isMystery) {
                     triggerItemRoulette();
                 }
 
@@ -1518,7 +1518,7 @@ function update() {
         let oj = flyingOjamaList[i];
         oj.y += oj.vy; 
         if (oj.y <= oj.targetY) {
-            applyOjamaToGrid(oj.color, oj.targetR, oj.targetC);
+            applyOjamaToGrid(oj.cellData, oj.targetR, oj.targetC);
             flyingOjamaList.splice(i, 1);
             
             if (flyingOjamaList.length === 0 && gameMode === 'battle' && battleType === 'お邪魔対戦' && battleTurnState === 'opponent_turn') {
@@ -1599,7 +1599,7 @@ function snapBullet() {
         cell.c = Math.max(0, Math.min(colsInRow - 1, cell.c));
 
         if (grid[cell.r][cell.c] === null) {
-            if (bulletColor === SPECIAL_BOMB) {
+            if (bulletData.color === SPECIAL_BOMB) {
                 playSE(se.bombExplode);
                 let affectedCells = [{ r: cell.r, c: cell.c }];
                 let neighbors = (cell.r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
@@ -1614,14 +1614,14 @@ function snapBullet() {
                 for (let ac of affectedCells) {
                     let targetCell = grid[ac.r][ac.c];
                     if (targetCell !== null && targetCell.color !== UNBREAKABLE_COLOR) {
-                        if (targetCell.color === SPECIAL_MYSTERY) triggerItemRoulette();
+                        if (targetCell.isMystery) triggerItemRoulette();
                         flashList.push({ r: ac.r, c: ac.c });
                         grid[ac.r][ac.c] = null;
                         generatedOjama++;
                     }
                 }
                 triggerFlashEffect(flashList, flashList.length * 40);
-            } else if (bulletColor === SPECIAL_RAINBOW) {
+            } else if (bulletData.color === SPECIAL_RAINBOW) {
                 playSE(se.rainbowLand);
                 let targetColor = null;
                 let neighbors = (cell.r % 2 === 0) ? [[-1,-1], [-1,0], [0,-1], [0,1], [1,-1], [1,0]] : [[-1,0], [-1,1], [0,-1], [0,1], [1,0], [1,1]];
@@ -1639,9 +1639,9 @@ function snapBullet() {
                         for (let c = 0; c < rCols; c++) {
                             let gCell = grid[r][c];
                             if (gCell !== null && gCell.color === targetColor) {
-                                if (gCell.color === SPECIAL_MYSTERY) triggerItemRoulette();
+                                if (gCell.isMystery) triggerItemRoulette();
                                 let pos = getPixelCoords(r, c);
-                                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: targetColor });
+                                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: targetColor, isMystery: gCell.isMystery });
                                 grid[r][c] = null; clearedCount++;
                             }
                         }
@@ -1652,14 +1652,14 @@ function snapBullet() {
                 }
             } else {
                 playSE(se.ballLand);
-                grid[cell.r][cell.c] = { color: bulletColor, isOjama: false };
-                let matches = findConnected(cell.r, cell.c, bulletColor);
+                grid[cell.r][cell.c] = { color: bulletData.color, isOjama: false, isMystery: bulletData.isMystery };
+                let matches = findConnected(cell.r, cell.c, bulletData.color);
                 if (matches.length >= 3) {
                     for (let m of matches) {
                         let mCell = grid[m.r][m.c];
-                        if (mCell && mCell.color === SPECIAL_MYSTERY) triggerItemRoulette();
+                        if (mCell && mCell.isMystery) triggerItemRoulette();
                         let pos = getPixelCoords(m.r, m.c);
-                        fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: bulletColor });
+                        fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: bulletData.color, isMystery: mCell ? mCell.isMystery : false });
                         grid[m.r][m.c] = null; score += 10;
                     }
                     let floatCount = removeFloating();
@@ -1671,15 +1671,13 @@ function snapBullet() {
     
     spawnBullet();
 
-    // アイテム発動チェック＆反映
     let usedItem = activeItem;
     if (usedItem !== null && hasItem[usedItem]) {
-        hasItem[usedItem] = false; // 消費
+        hasItem[usedItem] = false;
     } else {
         usedItem = null;
     }
 
-    // 仕様①: お邪魔×2 (index 0) -> 発射前に対象アイテムボタンを押した場合、お邪魔玉数が倍に
     if (usedItem === 0) {
         generatedOjama *= 2;
     }
@@ -1689,7 +1687,6 @@ function snapBullet() {
             conn.send({ type: 'sync_turn_action', ojamaAmount: generatedOjama, didClear: false, activeItemUsed: usedItem });
         }
 
-        // 仕様②: スキップ (index 1) -> 発射前に押した場合、相手の画面に1回休みが表示され、次のターンも自分のターンになる
         if (usedItem === 1) {
             battleTurnState = 'my_turn';
             startTurnTimer();
@@ -1755,7 +1752,7 @@ function draw() {
     ctx.fillStyle = "#aaa";
     ctx.font = "bold 11px sans-serif";
     ctx.fillText("NEXT", 336, 192);
-    drawBubble(352, 232, nextColor, 17);
+    drawBubble(352, 232, nextBubble.color, 17, false, nextBubble.isMystery);
 
     let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
     ctx.fillStyle = btnBg;
@@ -1776,7 +1773,6 @@ function draw() {
     ctx.font = "bold 12px sans-serif";
     ctx.fillText("⚙️ 設定", 352, 570);
 
-    // --- 🎁 画面右側の右下余白に4種類のアイテムボタン設置 ---
     if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
         let itemNames = ['①お邪魔×2', '②スキップ', '③跳ね返し', '④色変更'];
         let itemStartY = 380;
@@ -1808,7 +1804,7 @@ function draw() {
                 let pos = getPixelCoords(r, c);
                 if (cell.color === UNBREAKABLE_COLOR) drawUnbreakableBubble(pos.x, pos.y, RADIUS);
                 else {
-                    drawBubble(pos.x, pos.y, cell.color, RADIUS, cell.isOjama);
+                    drawBubble(pos.x, pos.y, cell.color, RADIUS, cell.isOjama, cell.isMystery);
                 }
             }
         }
@@ -1824,10 +1820,10 @@ function draw() {
         }
     }
 
-    for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS, false);
+    for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS, false, fb.isMystery);
 
     for (let oj of flyingOjamaList) {
-        drawBubble(oj.x, oj.y, oj.color, RADIUS, true);
+        drawBubble(oj.x, oj.y, oj.cellData.color, RADIUS, true, oj.cellData.isMystery);
     }
 
     if (isDragging) {
@@ -1841,14 +1837,13 @@ function draw() {
         }
         ctx.beginPath(); ctx.moveTo(shooterX, shooterY); ctx.lineTo(shooterX + pullX, shooterY + pullY);
         ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 4; ctx.stroke(); ctx.closePath();
-        drawBubble(shooterX + pullX, shooterY + pullY, bulletColor, RADIUS, false);
+        drawBubble(shooterX + pullX, shooterY + pullY, bulletData.color, RADIUS, false, bulletData.isMystery);
     } else if (isMoving) {
-        drawBubble(bulletX, bulletY, bulletColor, RADIUS, false);
+        drawBubble(bulletX, bulletY, bulletData.color, RADIUS, false, bulletData.isMystery);
     } else {
-        drawBubble(shooterX, shooterY, bulletColor, RADIUS, false);
+        drawBubble(shooterX, shooterY, bulletData.color, RADIUS, false, bulletData.isMystery);
     }
 
-    // --- 相手の番の演出（ゆっくり点滅表示） ---
     if (gameMode === 'battle' && battleType === 'お邪魔対戦' && battleTurnState === 'opponent_turn') {
         let alpha = 0.5 + 0.5 * Math.sin(Date.now() / 400);
         ctx.save();
@@ -1869,7 +1864,6 @@ function draw() {
         ctx.restore();
     }
 
-    // --- 制限時間5秒前からの大きなカウントダウン表示 ---
     if (gameMode === 'battle' && battleType === 'お邪魔対戦' && battleTurnState === 'my_turn' && turnRemainingTime <= 5) {
         ctx.save();
         ctx.fillStyle = "rgba(255, 0, 0, 0.35)";
@@ -1927,7 +1921,7 @@ function drawTitleBackground() {
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    ctx.fillText("Ver 1.10", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.11", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
 
@@ -1964,7 +1958,7 @@ function drawBattleResultScreen() {
     drawParticles();
 }
 
-function drawBubble(x, y, color, r, isOjama = false) {
+function drawBubble(x, y, color, r, isOjama = false, isMystery = false) {
     if (customImages[color]) {
         ctx.save();
         ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.clip();
@@ -1974,29 +1968,38 @@ function drawBubble(x, y, color, r, isOjama = false) {
         ctx.strokeStyle = isOjama ? "#ff4d4d" : "#fff"; 
         ctx.lineWidth = isOjama ? 3.5 : 2; 
         ctx.stroke(); ctx.closePath();
-        return;
-    }
-    ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2);
-    if (color === SPECIAL_RAINBOW) {
-        let colorIndex = Math.floor(Date.now() / 150) % BASE_COLORS.length;
-        ctx.fillStyle = BASE_COLORS[colorIndex]; ctx.fill(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.stroke();
-        ctx.fillStyle = "#ffffff"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText("★", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-    } else if (color === SPECIAL_BOMB) {
-        ctx.fillStyle = "#333"; ctx.fill(); ctx.strokeStyle = "#ff5722"; ctx.lineWidth = 3; ctx.stroke();
-        ctx.fillStyle = "#ff5722"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText("💣", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-    } else if (color === SPECIAL_MYSTERY) {
-        ctx.fillStyle = "#8a2be2"; ctx.fill(); ctx.strokeStyle = "#ffcc00"; ctx.lineWidth = 3; ctx.stroke();
-        ctx.fillStyle = "#ffcc00"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText("？", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     } else {
-        ctx.fillStyle = color; ctx.fill(); 
-        ctx.strokeStyle = isOjama ? "#ff4d4d" : "#fff"; 
-        ctx.lineWidth = isOjama ? 3.5 : 2; 
-        ctx.stroke();
+        ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2);
+        if (color === SPECIAL_RAINBOW) {
+            let colorIndex = Math.floor(Date.now() / 150) % BASE_COLORS.length;
+            ctx.fillStyle = BASE_COLORS[colorIndex]; ctx.fill(); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.stroke();
+            ctx.fillStyle = "#ffffff"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText("★", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+        } else if (color === SPECIAL_BOMB) {
+            ctx.fillStyle = "#333"; ctx.fill(); ctx.strokeStyle = "#ff5722"; ctx.lineWidth = 3; ctx.stroke();
+            ctx.fillStyle = "#ff5722"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText("💣", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+        } else {
+            ctx.fillStyle = color; ctx.fill(); 
+            ctx.strokeStyle = isOjama ? "#ff4d4d" : "#fff"; 
+            ctx.lineWidth = isOjama ? 3.5 : 2; 
+            ctx.stroke();
+        }
+        ctx.closePath();
     }
-    ctx.closePath();
+
+    // 既存の色玉の上に控えめな「？」マーク（またはグロー効果など）を重ねてミステリー玉であることを示す
+    if (isMystery) {
+        ctx.save();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 12px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.shadowColor = "#000";
+        ctx.shadowBlur = 4;
+        ctx.fillText("？", x, y);
+        ctx.restore();
+    }
 }
 
 function drawUnbreakableBubble(x, y, r) {
