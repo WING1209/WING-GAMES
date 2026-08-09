@@ -97,11 +97,11 @@ let roomCode = '';
 let gameState = 'title';
 
 // --- 🔄 ターン制・じゃんけん管理用変数 ---
-let battleTurnState = 'waiting'; // 'waiting', 'janken', 'my_turn', 'opponent_turn', 'resolving'
+let battleTurnState = 'waiting'; 
 let myJankenChoice = '';
 let opponentJankenChoice = '';
 let jankenResultMsg = 'じゃんけんの手を選んでください';
-let currentTurnPlayer = ''; // 'host' または 'guest'
+let currentTurnPlayer = ''; 
 const TURN_TIME_LIMIT = 10;
 let turnRemainingTime = TURN_TIME_LIMIT;
 let turnTimerInterval = null;
@@ -143,7 +143,6 @@ let attackNoticeText = "";
 let attackNoticeTimer = 0;
 let shakeTimer = 0;
 
-// タイマー関連（ソロモード）
 const STAGE_TIME_LIMIT = 180; 
 let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
@@ -200,7 +199,6 @@ function stopTimer() {
     }
 }
 
-// ⏱️ ターン制用 10秒制限タイマー
 function startTurnTimer() {
     stopTurnTimer();
     turnRemainingTime = TURN_TIME_LIMIT;
@@ -353,7 +351,6 @@ function setupConnectionListeners() {
 
     conn.on('data', (data) => {
         if (battleRole === 'guest') {
-            // --- ゲスト側 ---
             if (data.type === 'show_rules') {
                 targetWins = data.targetWins;
                 battleType = data.battleType;
@@ -381,7 +378,6 @@ function setupConnectionListeners() {
                 startNextRound();
             }
         } else {
-            // --- ホスト側 ---
             if (data.type === 'sync_janken_result') {
                 opponentJankenChoice = data.choice;
                 checkJankenFinish();
@@ -494,13 +490,12 @@ function startNextRound() {
     gameState = 'playing';
     playRandomBGM();
     if (battleType === 'お邪魔対戦') {
-        startJankenPhase(); // 再戦時にも必ずじゃんけんを挟むように修正
+        startJankenPhase();
     } else {
         showScreen('');
     }
 }
 
-// --- ✊✌️✋ じゃんけんフェーズ（ゲーム開始時および再戦時の毎回） ---
 function startJankenPhase() {
     battleTurnState = 'janken';
     myJankenChoice = '';
@@ -653,7 +648,7 @@ function executeOpponentAction(data) {
     }
 }
 
-// 💥 画面外「下」からお邪魔玉が飛んできて定着する演出（飛来中は勝敗判定を無効化）
+// 💥 下から飛来して、上にある既存の玉にヒットして定着する演出
 function launchOjamaProjectilesFromBottom(amount) {
     if (amount <= 0) return;
     let safeAmount = Math.min(amount, 10);
@@ -667,27 +662,51 @@ function launchOjamaProjectilesFromBottom(amount) {
         setTimeout(() => {
             let startX = Math.random() * 260 + 50;
             let startY = canvas.height + 40; 
-            let targetY = canvas.height - (Math.random() * 200 + 100); 
-            let color = getRandomGridColor();
+            let color = getRandomGridColor(); // 普通に消せる通常カラーに設定
+            
+            // 下から上に真っ直ぐ飛ばし、既存の玉（または上部）にぶつかったら止まるようにターゲットを計算
+            let targetY = findOjamaTargetY(startX);
             
             flyingOjamaList.push({
                 x: startX,
                 y: startY,
                 targetY: targetY,
                 color: color,
-                vy: -(6 + Math.random() * 4) 
+                vy: -(7 + Math.random() * 3) 
             });
         }, i * 120);
     }
 }
 
+// 既存の玉の下側に綺麗に定着するための高さを計算する関数
+function findOjamaTargetY(x) {
+    let bestR = 0;
+    let bestC = Math.floor(x / DIAMETER);
+    bestC = Math.max(0, Math.min(COLS - 1, bestC));
+
+    // 上から順に埋まっているセルを探し、その真下に置く
+    for (let r = 0; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        let c = Math.min(bestC, colsInRow - 1);
+        if (grid[r][c] !== null) {
+            bestR = Math.max(0, r - 1);
+            let pos = getPixelCoords(bestR, c);
+            return pos.y;
+        }
+    }
+    // もし上部に一切玉がない場合は、一番上の行に配置する
+    let topPos = getPixelCoords(0, bestC);
+    return topPos.y;
+}
+
 function applyOjamaToGrid(color) {
     let placed = false;
+    // 下から順に空いているマスを探して埋める（消せるお邪魔玉としてセット）
     for (let r = ROWS - 1; r >= 0; r--) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
             if (grid[r][c] === null) {
-                grid[r][c] = { color: color, isOjama: true };
+                grid[r][c] = { color: color, isOjama: true }; // isOjamaをtrueにしつつ消せる色にする
                 placed = true;
                 break;
             }
@@ -704,7 +723,6 @@ function applyOjamaToGrid(color) {
         }
     }
 
-    // お邪魔玉が完全に定着したあとなのでここで安全にゲームオーバー判定を行う
     checkGameOverCondition();
 }
 
@@ -760,7 +778,6 @@ function resetBulletPos() {
 }
 
 function checkClearCondition() {
-    // お邪魔玉の飛来中・落下中・フラッシュ中はクリア判定を行わない
     if (fallingBubbles.length > 0 || flashingBubbles.length > 0 || flyingOjamaList.length > 0) return;
 
     let hasBreakable = false;
@@ -818,7 +835,6 @@ function triggerSoloGameOver(msg) {
 
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
-    // 飛来中のお邪魔玉が存在する場合はゲームオーバー判定を完全に無効化する
     if (flyingOjamaList.length > 0) return;
 
     let limitRow = ROWS - 1; 
@@ -1195,7 +1211,7 @@ function findConnected(r, c, color, visited = new Set()) {
     if (visited.has(key) || r < 0 || r >= ROWS || c < 0 || c >= colsInRow) return [];
     
     let cell = grid[r][c];
-    if (cell === null || cell.isOjama || cell.color === UNBREAKABLE_COLOR || cell.color !== color) return [];
+    if (cell === null || cell.color === UNBREAKABLE_COLOR || cell.color !== color) return [];
 
     visited.add(key);
     let matches = [{ r, c }];
@@ -1369,7 +1385,7 @@ function snapBullet() {
                 for (let n of neighbors) {
                     let nr = cell.r + n[0], nc = cell.c + n[1];
                     let nCols = (nr >= 0 && nr < ROWS) ? ((nr % 2 === 0) ? COLS : COLS - 1) : 0;
-                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc].color !== UNBREAKABLE_COLOR && !grid[nr][nc].isOjama) {
+                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < nCols && grid[nr][nc] !== null && grid[nr][nc].color !== UNBREAKABLE_COLOR) {
                         targetColor = grid[nr][nc].color; break;
                     }
                 }
@@ -1379,7 +1395,7 @@ function snapBullet() {
                         let rCols = (r % 2 === 0) ? COLS : COLS - 1;
                         for (let c = 0; c < rCols; c++) {
                             let gCell = grid[r][c];
-                            if (gCell !== null && gCell.color === targetColor && !gCell.isOjama) {
+                            if (gCell !== null && gCell.color === targetColor) {
                                 let pos = getPixelCoords(r, c);
                                 fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: targetColor });
                                 grid[r][c] = null; clearedCount++;
@@ -1504,7 +1520,7 @@ function draw() {
                 else {
                     drawBubble(pos.x, pos.y, cell.color, RADIUS);
                     if (cell.isOjama) {
-                        ctx.fillStyle = "#ff3333";
+                        ctx.fillStyle = "#ffffff";
                         ctx.font = "bold 11px sans-serif";
                         ctx.textAlign = "center";
                         ctx.textBaseline = "middle";
@@ -1531,7 +1547,7 @@ function draw() {
 
     for (let oj of flyingOjamaList) {
         drawBubble(oj.x, oj.y, oj.color, RADIUS);
-        ctx.fillStyle = "#ff3333";
+        ctx.fillStyle = "#ffffff";
         ctx.font = "bold 11px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -1584,7 +1600,7 @@ function drawTitleBackground() {
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    ctx.fillText("Ver 1.07", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.08", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
 
