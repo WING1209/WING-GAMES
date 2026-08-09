@@ -1,318 +1,443 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>○o WING GAME玉 o○</title>
-    <!-- PeerJS (通信用ライブラリ) -->
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-    <style>
-        * {
-            box-sizing: border-box;
-            -webkit-touch-callout: none;
-            -webkit-user-select: none;
-            user-select: none;
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- 画面切り替えユーティリティ ---
+function showScreen(screenId) {
+    document.querySelectorAll('.overlay-screen').forEach(s => s.style.display = 'none');
+    const target = document.getElementById(screenId);
+    if (target) {
+        target.style.display = 'flex';
+    }
+}
+
+function goToHowToPlay() {
+    showScreen('screen-how-to-play');
+}
+
+function returnToTitle() {
+    gameState = 'TITLE';
+    showScreen('screen-title');
+}
+
+// --- ゲーム定数・パラメータ ---
+const COLS = 6;
+const RADIUS = 22;
+const DIAMETER = RADIUS * 2;
+const ROW_OFFSET = RADIUS;
+
+const COLORS = ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#ff44ff', '#44ffff'];
+
+let grid = [];
+let currentBubble = null;
+let nextColor = 0;
+let score = 0;
+let bombs = 2;
+let gameState = 'TITLE'; // TITLE, PLAYING, OJAMASHOOT, WIN, GAMEOVER
+
+// お邪魔演出用キュー・ステート
+let ojamaQueue = [];
+let currentOjaming = null; 
+
+function initGame() {
+    grid = [];
+    for (let r = 0; r < 12; r++) {
+        let row = [];
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (r < 2) {
+                row.push({ color: Math.floor(Math.random() * COLORS.length), isOjama: false });
+            } else {
+                row.push(null);
+            }
         }
-        body {
-            margin: 0;
-            padding: 0;
-            background: #111;
-            color: #fff;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            height: 100dvh;
-            overflow: hidden;
-            touch-action: none;
+        grid.push(row);
+    }
+    nextColor = Math.floor(Math.random() * COLORS.length);
+    spawnBubble();
+}
+
+function spawnBubble() {
+    currentBubble = {
+        x: canvas.width / 2,
+        y: canvas.height - 40,
+        vx: 0,
+        vy: 0,
+        color: nextColor,
+        isOjama: false
+    };
+    nextColor = Math.floor(Math.random() * COLORS.length);
+}
+
+function startSinglePlay() {
+    score = 0;
+    bombs = 2;
+    initGame();
+    gameState = 'PLAYING';
+    showScreen(''); // オーバーレイを全て閉じる
+}
+
+// --- 座標変換 ---
+function gridToScreen(r, c) {
+    let isOdd = (r % 2 === 1);
+    let x = c * DIAMETER + RADIUS + (isOdd ? ROW_OFFSET : 0) + 20;
+    let y = r * (DIAMETER * 0.866) + RADIUS + 20;
+    return { x, y };
+}
+
+function screenToGrid(x, y) {
+    let r = Math.round((y - 20 - RADIUS) / (DIAMETER * 0.866));
+    if (r < 0) r = 0;
+    if (r >= grid.length) r = grid.length - 1;
+    let isOdd = (r % 2 === 1);
+    let c = Math.round((x - 20 - RADIUS - (isOdd ? ROW_OFFSET : 0)) / DIAMETER);
+    let maxCols = (r % 2 === 0) ? COLS : COLS - 1;
+    if (c < 0) c = 0;
+    if (c >= maxCols) c = maxCols;
+    return { r, c };
+}
+
+// --- 入力（タッチ・クリック） ---
+canvas.addEventListener('click', (e) => {
+    if (gameState !== 'PLAYING') return;
+    if (!currentBubble || currentBubble.vy !== 0) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    const mouseY = (e.clientY - rect.top) * scaleY;
+
+    let angle = Math.atan2(mouseY - currentBubble.y, mouseX - currentBubble.x);
+    let speed = 12;
+    currentBubble.vx = Math.cos(angle) * speed;
+    currentBubble.vy = Math.sin(angle) * speed;
+});
+
+// --- 更新処理 ---
+function update() {
+    // 1. お邪魔玉演出中の処理（1個ずつ順番に射出）
+    if (gameState === 'OJAMASHOOT') {
+        if (!currentOjaming && ojamaQueue.length > 0) {
+            let color = ojamaQueue.shift();
+            // 画面真ん中より下側（例: y = 480付近）からスタート
+            currentOjaming = {
+                x: canvas.width / 2,
+                y: 480,
+                color: color,
+                isOjama: true,
+                vy: -10
+            };
         }
-        #game-container {
-            position: relative;
-            width: 100vw;
-            height: 100dvh;
-            max-width: 480px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
+
+        if (currentOjaming) {
+            currentOjaming.y += currentOjaming.vy;
+
+            // 天井（y <= 60）または上部の既存玉に接触したら停止して定着
+            let hit = false;
+            if (currentOjaming.y <= 60 || checkCollisionWithExisting(currentOjaming.x, currentOjaming.y)) {
+                hit = true;
+            }
+
+            if (hit) {
+                insertOjamaToGrid(currentOjaming.color);
+                currentOjaming = null;
+
+                // すべてのキューが完全に射出し終わったら、通常プレイおよび勝利判定を再開
+                if (ojamaQueue.length === 0) {
+                    gameState = 'PLAYING';
+                }
+            }
         }
-        canvas {
-            background: #1a1a1a;
-            box-shadow: 0 0 15px rgba(0,0,0,0.8);
-            display: block;
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            z-index: 1;
-            touch-action: none;
+        return;
+    }
+
+    if (gameState !== 'PLAYING') return;
+
+    // 通常玉の移動処理
+    if (currentBubble && currentBubble.vy !== 0) {
+        currentBubble.x += currentBubble.vx;
+        currentBubble.y += currentBubble.vy;
+
+        // 壁反射
+        if (currentBubble.x - RADIUS < 0) {
+            currentBubble.x = RADIUS;
+            currentBubble.vx *= -1;
+        } else if (currentBubble.x + RADIUS > canvas.width) {
+            currentBubble.x = canvas.width - RADIUS;
+            currentBubble.vx *= -1;
         }
-        .overlay-screen {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(17, 17, 17, 0.95);
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
-            z-index: 100;
-            text-align: center;
+
+        // 天井衝突または既存玉への接触
+        let hit = false;
+        if (currentBubble.y - RADIUS <= 20) {
+            hit = true;
+        } else {
+            hit = checkCollisionWithExisting(currentBubble.x, currentBubble.y);
         }
-        .overlay-screen h2 {
-            color: #ffcc00;
-            font-size: 26px;
-            margin-bottom: 20px;
+
+        if (hit) {
+            snapCurrentBubble();
         }
+    }
+}
+
+function checkCollisionWithExisting(x, y) {
+    for (let r = 0; r < grid.length; r++) {
+        for (let c = 0; c < grid[r].length; c++) {
+            if (grid[r][c] !== null) {
+                let pos = gridToScreen(r, c);
+                let dist = Math.hypot(pos.x - x, pos.y - y);
+                if (dist <= DIAMETER * 0.95) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+function insertOjamaToGrid(color) {
+    for (let r = 0; r < grid.length; r++) {
+        for (let c = 0; c < grid[r].length; c++) {
+            if (grid[r][c] === null) {
+                grid[r][c] = { color: color, isOjama: true };
+                return;
+            }
+        }
+    }
+}
+
+function snapCurrentBubble() {
+    let { r, c } = screenToGrid(currentBubble.x, currentBubble.y);
+    
+    if (r < 0) r = 0;
+    if (r >= grid.length) r = grid.length - 1;
+    let maxCols = (r % 2 === 0) ? COLS : COLS - 1;
+    if (c >= maxCols) c = maxCols;
+
+    if (grid[r][c] !== null) {
+        let found = false;
+        for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+                let nr = r + dr;
+                let nc = c + dc;
+                if (nr >= 0 && nr < grid.length) {
+                    let mc = (nr % 2 === 0) ? COLS : COLS - 1;
+                    if (nc >= 0 && nc < mc && grid[nr][nc] === null) {
+                        r = nr;
+                        c = nc;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (found) break;
+        }
+    }
+
+    if (r < grid.length && c < grid[r].length) {
+        grid[r][c] = { color: currentBubble.color, isOjama: currentBubble.isOjama };
         
-        .title-logo {
-            font-size: 28px;
-            font-weight: 900;
-            color: #ffcc00;
-            text-shadow: 0 0 12px rgba(255, 204, 0, 0.6);
-            margin-bottom: 40px;
-            animation: dropDown 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        let cleared = checkMatches(r, c, currentBubble.color);
+        if (cleared.length >= 3) {
+            cleared.forEach(pos => {
+                grid[pos.r][pos.c] = null;
+            });
+            score += cleared.length * 100;
+            dropFloatingBubbles();
         }
-        @keyframes dropDown {
-            0% { transform: translateY(-200px); opacity: 0; }
-            100% { transform: translateY(0); opacity: 1; }
+    }
+
+    // 勝利判定（お邪魔玉演出中以外のみ有効）
+    if (gameState === 'PLAYING') {
+        checkWinCondition();
+    }
+
+    if (gameState === 'PLAYING') {
+        spawnBubble();
+    }
+}
+
+function checkMatches(startR, startC, color) {
+    let visited = Array.from({length: grid.length}, () => Array(COLS).fill(false));
+    let matchGroup = [];
+    let queue = [{r: startR, c: startC}];
+    visited[startR][startC] = true;
+
+    while (queue.length > 0) {
+        let curr = queue.shift();
+        matchGroup.push(curr);
+
+        let neighbors = getNeighbors(curr.r, curr.c);
+        for (let n of neighbors) {
+            if (!visited[n.r][n.c] && grid[n.r][n.c] !== null) {
+                let cell = grid[n.r][n.c];
+                let cellColor = (typeof cell === 'object') ? cell.color : cell;
+
+                if (cellColor === color) {
+                    visited[n.r][n.c] = true;
+                    queue.push(n);
+                }
+            }
         }
+    }
+    return matchGroup;
+}
 
-        .blink-text {
-            font-size: 20px;
-            font-weight: bold;
-            color: #4da6ff;
-            animation: blink 1.2s infinite ease-in-out;
-            cursor: pointer;
+function getNeighbors(r, c) {
+    let isOdd = (r % 2 === 1);
+    let directions = isOdd ? [
+        {r: -1, c: 0}, {r: -1, c: 1},
+        {r: 0, c: -1}, {r: 0, c: 1},
+        {r: 1, c: 0}, {r: 1, c: 1}
+    ] : [
+        {r: -1, c: -1}, {r: -1, c: 0},
+        {r: 0, c: -1}, {r: 0, c: 1},
+        {r: 1, c: -1}, {r: 1, c: 0}
+    ];
+
+    let results = [];
+    let maxCols = (r % 2 === 0) ? COLS : COLS - 1;
+
+    for (let d of directions) {
+        let nr = r + d.r;
+        let nc = c + d.c;
+        let nMaxCols = (nr >= 0 && nr % 2 === 0) ? COLS : COLS - 1;
+        if (nr >= 0 && nr < grid.length && nc >= 0 && nc < nMaxCols) {
+            results.push({r: nr, c: nc});
         }
-        @keyframes blink {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.2; transform: scale(0.95); }
+    }
+    return results;
+}
+
+function dropFloatingBubbles() {
+    let connected = Array.from({length: grid.length}, () => Array(COLS).fill(false));
+    let queue = [];
+
+    for (let c = 0; c < grid[0].length; c++) {
+        if (grid[0][c] !== null) {
+            connected[0][c] = true;
+            queue.push({r: 0, c: c});
         }
+    }
 
-        .version-text {
-            font-size: 14px;
-            color: #ffffff;
-            margin-top: 15px;
-            font-weight: bold;
-            letter-spacing: 1px;
+    while (queue.length > 0) {
+        let curr = queue.shift();
+        let neighbors = getNeighbors(curr.r, curr.c);
+        for (let n of neighbors) {
+            if (!connected[n.r][n.c] && grid[n.r][n.c] !== null) {
+                connected[n.r][n.c] = true;
+                queue.push(n);
+            }
         }
+    }
 
-        .menu-btn {
-            background: #ffcc00;
-            color: #111;
-            border: none;
-            padding: 16px 20px;
-            border-radius: 12px;
-            font-weight: bold;
-            font-size: 18px;
-            margin: 8px 0;
-            width: 85%;
-            max-width: 280px;
-            cursor: pointer;
+    for (let r = 0; r < grid.length; r++) {
+        for (let c = 0; c < grid[r].length; c++) {
+            if (grid[r][c] !== null && !connected[r][c]) {
+                grid[r][c] = null;
+                score += 50;
+            }
         }
-        .menu-btn:active {
-            transform: scale(0.96);
-            opacity: 0.9;
+    }
+}
+
+function checkWinCondition() {
+    let hasBalls = false;
+    for (let r = 0; r < grid.length; r++) {
+        for (let c = 0; c < grid[r].length; c++) {
+            if (grid[r][c] !== null) {
+                hasBalls = true;
+                break;
+            }
         }
-        .menu-btn.sub { background: #4da6ff; color: #fff; }
-        .menu-btn.gray { background: #555; color: #fff; }
-        .menu-btn.danger { background: #ff4d4d; color: #fff; }
-        
-        input.text-input {
-            background: #222;
-            border: 2px solid #ffcc00;
-            color: #fff;
-            font-size: 24px;
-            text-align: center;
-            padding: 10px;
-            border-radius: 10px;
-            width: 220px;
-            margin: 15px 0;
+        if (hasBalls) break;
+    }
+    if (!hasBalls) {
+        gameState = 'WIN';
+    }
+}
+
+// テスト用にお邪魔玉の飛来をトリガーする関数
+function triggerOjamaTest(colorIndex) {
+    ojamaQueue.push(colorIndex);
+    ojamaQueue.push(colorIndex); // 2つ連続でお邪魔玉をテスト追加
+    gameState = 'OJAMASHOOT';
+}
+
+// --- 描画処理 ---
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // グリッドの玉を描画
+    for (let r = 0; r < grid.length; r++) {
+        for (let c = 0; c < grid[r].length; c++) {
+            let cell = grid[r][c];
+            if (cell !== null) {
+                let pos = gridToScreen(r, c);
+                let colorIdx = (typeof cell === 'object') ? cell.color : cell;
+                let isOjama = (typeof cell === 'object') ? cell.isOjama : false;
+                drawBubble(pos.x, pos.y, COLORS[colorIdx], isOjama);
+            }
         }
-        #status-message {
-            color: #ff4d4d;
-            font-size: 14px;
-            margin-top: 10px;
-            height: 20px;
-        }
-        .ranking-table {
-            width: 95%;
-            border-collapse: collapse;
-            margin: 15px 0;
-            font-size: 14px;
-        }
-        .ranking-table th, .ranking-table td {
-            border-bottom: 1px solid #444;
-            padding: 8px 4px;
-            text-align: center;
-        }
-        .ranking-table th { color: #ffcc00; }
+    }
 
-        .rules-box {
-            background: #222;
-            border: 1px solid #555;
-            padding: 16px;
-            border-radius: 10px;
-            font-size: 14px;
-            text-align: left;
-            line-height: 1.6;
-            margin-bottom: 20px;
-            max-width: 330px;
-            box-shadow: inset 0 0 8px rgba(0,0,0,0.5);
-        }
-        .rules-box b {
-            color: #ffcc00;
-        }
-    </style>
-</head>
-<body>
+    // 操作中の玉を描画
+    if (currentBubble && gameState === 'PLAYING') {
+        drawBubble(currentBubble.x, currentBubble.y, COLORS[currentBubble.color], currentBubble.isOjama);
+    }
 
-    <div id="game-container">
-        <canvas id="gameCanvas" width="400" height="750"></canvas>
+    // 射出中のお邪魔玉を描画
+    if (currentOjaming) {
+        drawBubble(currentOjaming.x, currentOjaming.y, COLORS[currentOjaming.color], true);
+    }
 
-        <div id="screen-title" class="overlay-screen" style="display:flex; cursor:pointer;" onclick="goToHowToPlay()">
-            <div class="title-logo">○o WING GAME玉 o○</div>
-            <div class="blink-text">- START (画面をタップ) -</div>
-            <div class="version-text">Ver1.J03</div>
-        </div>
+    // 勝利時の画面表示
+    if (gameState === 'WIN') {
+        ctx.fillStyle = 'rgba(0,0,0,0.85)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ffcc00';
+        ctx.font = 'bold 32px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('VICTORY!', canvas.width / 2, canvas.height / 2 - 20);
+        ctx.fillStyle = '#fff';
+        ctx.font = '16px sans-serif';
+        ctx.fillText('画面をタップしてタイトルへ', canvas.width / 2, canvas.height / 2 + 30);
+        ctx.textAlign = 'left';
+    }
+}
 
-        <div id="screen-how-to-play" class="overlay-screen">
-            <h2>🎮 遊び方</h2>
-            <div class="rules-box">
-                <b>【基本操作】</b><br>
-                ・玉を<b>引っ張って狙いを定め、離してショット！</b><br>
-                ・同じ色の玉を<b>3つ以上連結</b>させると消せます。<br><br>
-                <b>【特殊玉を活用しよう】</b><br>
-                ・<b>💣 ボム玉</b>: 右側のボムボタンでセット！着弾点の周囲をまとめて爆破。<br>
-                ・<b>★ レインボー玉</b>: 当たった玉と同じ色の玉を全消し！
-            </div>
-            <button class="menu-btn" onclick="showScreen('screen-mode')">次へ進む ➔</button>
-        </div>
+function drawBubble(x, y, color, isOjama) {
+    ctx.beginPath();
+    ctx.arc(x, y, RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
 
-        <div id="screen-mode" class="overlay-screen">
-            <h2>モード選択</h2>
-            <button class="menu-btn" onclick="startSinglePlay()">🎮 ひとりで遊ぶ</button>
-            <button class="menu-btn sub" onclick="showScreen('screen-role-select')">⚔️ フレンド対戦</button>
-            <button class="menu-btn gray" onclick="showRankingBoard()">🏆 スコアランキング</button>
-            <button class="menu-btn gray" onclick="openSettings()">⚙️ 玉画像設定</button>
-        </div>
+    // お邪魔玉の場合は×を消去し、外枠を太めの赤色に変更
+    if (isOjama) {
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 4;
+    } else {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+    }
+    ctx.stroke();
+}
 
-        <div id="screen-role-select" class="overlay-screen">
-            <h2>対戦設定</h2>
-            <button class="menu-btn" onclick="setupRole('host')">👑 1P（ホスト：部屋を作る）</button>
-            <button class="menu-btn sub" onclick="setupRole('guest')">🎮 2P（ゲスト：部屋に入る）</button>
-            <button class="menu-btn gray" onclick="showScreen('screen-mode')">もどる</button>
-        </div>
+// --- メインループ ---
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
 
-        <div id="screen-guest-join" class="overlay-screen">
-            <h2>合言葉を入力</h2>
-            <p style="font-size: 14px; color: #ccc;">1P(ホスト)から教わった4桁の数字を入力</p>
-            <input type="number" id="input-room-code" class="text-input" style="width:160px; letter-spacing:6px;" maxlength="4" placeholder="0000">
-            <br>
-            <button class="menu-btn" onclick="joinRoom()">接続して待機</button>
-            <button class="menu-btn gray" onclick="cancelNetwork('screen-role-select')">もどる</button>
-            <div id="status-message"></div>
-        </div>
+// 初期化実行開始
+initGame();
+loop();
 
-        <div id="screen-host-wait" class="overlay-screen">
-            <h2>2Pの接続待ち...</h2>
-            <p style="font-size: 14px; color: #ccc;">以下の4桁を2P(ゲスト)に伝えてください</p>
-            <div id="display-room-code" style="font-size: 52px; color: #ffcc00; letter-spacing: 10px; margin: 20px 0; font-weight: bold;">----</div>
-            <p style="font-size: 13px; color: #888;">相手が接続すると自動でルール設定に進みます</p>
-            <button class="menu-btn gray" onclick="cancelNetwork('screen-role-select')">キャンセル</button>
-        </div>
-
-        <div id="screen-guest-wait-rule" class="overlay-screen">
-            <h2 style="color:#4dff4d;">接続完了！</h2>
-            <p style="font-size: 18px; color: #ffcc00; margin-top: 30px;">対戦モード選択中...</p>
-            <p style="font-size: 14px; color: #aaa;">Wait...</p>
-        </div>
-
-        <div id="screen-host-rule-setup" class="overlay-screen">
-            <h2 style="color:#4dff4d;">マッチング成功！</h2>
-            <p style="font-size: 14px; color: #ccc;">対戦ルールを選択してください</p>
-            
-            <div style="width:100%; margin: 10px 0;">
-                <p style="margin:5px 0; font-size:14px; font-weight:bold;">■ ゲームモード</p>
-                <button class="menu-btn sub" id="btn-mode-ta" onclick="setHostBattleType('タイムアタック')" style="padding:10px; font-size:15px; margin:4px;">⏱️ タイムアタック</button>
-                <button class="menu-btn gray" id="btn-mode-ojama" onclick="setHostBattleType('お邪魔対戦')" style="padding:10px; font-size:15px; margin:4px;">⚔️ お邪魔対戦</button>
-            </div>
-            
-            <div style="width:100%; margin: 10px 0;">
-                <p style="margin:5px 0; font-size:14px; font-weight:bold;">■ 勝利数設定</p>
-                <button class="menu-btn" id="btn-win-1" onclick="setHostTargetWins(1)" style="padding:10px; font-size:15px; margin:4px;">🥇 1勝先取</button>
-                <button class="menu-btn gray" id="btn-win-2" onclick="setHostTargetWins(2)" style="padding:10px; font-size:15px; margin:4px;">🥇🥇 2勝先取</button>
-            </div>
-            
-            <button class="menu-btn" style="background:#ffcc00; margin-top:15px;" onclick="confirmHostBattleStart()">ルール確定 ➔</button>
-        </div>
-
-        <div id="screen-battle-rules-desc" class="overlay-screen">
-            <h2>ルール説明</h2>
-            <div id="rules-text-content" class="rules-box"></div>
-            <button class="menu-btn" onclick="readyToStartBattle()">対戦スタート！ 🔥</button>
-        </div>
-
-        <div id="screen-stage-clear" class="overlay-screen">
-            <h2>STAGE CLEAR!</h2>
-            <p id="clear-score-text" style="font-size: 18px; margin-bottom: 20px; color: #fff;"></p>
-            <button class="menu-btn sub" onclick="nextStageAction()">次のステージへ ➔</button>
-            <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ戻る</button>
-        </div>
-
-        <div id="screen-name-input" class="overlay-screen">
-            <h2 style="color:#4dff4d;">🏆 RANK IN!</h2>
-            <p id="rankin-desc-text" style="font-size: 15px; color: #fff;"></p>
-            <input type="text" id="player-name-input" class="text-input" maxlength="8" placeholder="プレイヤー名">
-            <br>
-            <button class="menu-btn" onclick="submitScoreAndShowRanking()">登録して決定</button>
-        </div>
-
-        <div id="screen-ranking" class="overlay-screen">
-            <h2>🏆 殿堂入り TOP 5</h2>
-            <table class="ranking-table">
-                <thead>
-                    <tr><th>順位</th><th>名前</th><th>到達</th><th>タイム</th><th>スコア</th></tr>
-                </thead>
-                <tbody id="ranking-list-body"></tbody>
-            </table>
-            <button class="menu-btn sub" onclick="returnToTitle()">タイトルへ戻る</button>
-        </div>
-
-        <div id="screen-game-over" class="overlay-screen">
-            <h2 style="color: #ff4d4d;">GAME OVER</h2>
-            <p id="gameover-score-text" style="font-size: 18px; margin-bottom: 20px; color: #fff;"></p>
-            <button class="menu-btn danger" id="btn-retry-solo" onclick="retryStage()">もう一度挑戦 🔄</button>
-            <button class="menu-btn gray" onclick="checkSoloGameOverRankIn()">タイトルへ戻る</button>
-        </div>
-
-        <div id="screen-battle-result" class="overlay-screen">
-            <h2 id="battle-result-title" style="font-size:36px; margin-bottom:10px;"></h2>
-            <p id="battle-result-sub" style="font-size:18px; color:#fff; margin-bottom:30px;"></p>
-            
-            <div id="battle-loser-controls" style="display:none; width:100%; flex-direction:column; align-items:center;">
-                <button class="menu-btn sub" onclick="requestRematch()">もう一度対戦する 🔄</button>
-                <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ戻る</button>
-            </div>
-            <div id="battle-winner-wait" style="display:none;">
-                <p style="color:#aaa; font-size:14px;">相手（敗者）の選択を待っています...</p>
-                <button class="menu-btn gray" style="margin-top:20px;" onclick="returnToTitle()">タイトルへ戻る</button>
-            </div>
-        </div>
-
-        <div id="settings-overlay" class="overlay-screen" style="justify-content: flex-start; padding-top: 40px;">
-            <h2>玉の画像カスタム</h2>
-            <div id="settings-list" style="width: 100%; display: flex; flex-direction: column; align-items: center; max-height: 480px; overflow-y: auto;"></div>
-            <button class="menu-btn sub" style="margin-top: 20px;" onclick="closeSettings()">保存して戻る</button>
-        </div>
-    </div>
-
-    <!-- JavaScriptファイルの読み込み -->
-    <script src="script.js"></script>
-</body>
-</html>
+// 勝利画面タップでタイトルに戻る
+canvas.addEventListener('click', () => {
+    if (gameState === 'WIN') {
+        returnToTitle();
+    }
+});
