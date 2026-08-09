@@ -759,23 +759,26 @@ function stopItemRoulette() {
     document.getElementById('roulette-overlay').style.display = 'none';
 }
 
-// --- 🎨 色変更アイテム選択オーバーレイ ---
-function openColorChangeStep1Overlay() {
+// --- 🎨 色変更アイテム選択オーバーレイ（上下表示＆「↓」デザイン） ---
+function openColorChangeOverlay() {
     stopTurnTimer(); // タイマー一時停止
     let container = document.getElementById('colorchange-overlay');
     if (!container) {
         createColorChangeOverlayDOM();
     }
     colorChangeStep = 1;
-    document.getElementById('cc-title').innerText = "🎨 変えたい色の玉を選択";
-    document.getElementById('cc-desc').innerText = "画面上で消したい（変更したい）色の玉をタップしてください";
-    document.getElementById('colorchange-overlay').style.display = 'flex';
-}
+    colorChangeSourceColor = '';
+    
+    // ステップ1のUI状態に初期化
+    document.getElementById('cc-step1-section').style.opacity = '1';
+    document.getElementById('cc-step2-section').style.opacity = '0.3';
+    document.getElementById('cc-step2-section').style.pointerEvents = 'none';
+    
+    // 選択ボタンの枠線などをリセット
+    document.querySelectorAll('.cc-src-btn').forEach(b => b.style.borderColor = '#fff');
+    document.querySelectorAll('.cc-dst-btn').forEach(b => { b.style.borderColor = '#fff'; b.style.transform = 'scale(1)'; });
 
-function openColorChangeStep2Overlay() {
-    colorChangeStep = 2;
-    document.getElementById('cc-title').innerText = "🎨 変更先の色の玉を選択";
-    document.getElementById('cc-desc').innerText = "何色の玉に書き換えるかを選択してください";
+    document.getElementById('colorchange-overlay').style.display = 'flex';
 }
 
 function createColorChangeOverlayDOM() {
@@ -785,27 +788,56 @@ function createColorChangeOverlayDOM() {
     overlay.style.cssText = "display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:1150; flex-direction:column; justify-content:center; align-items:center; color:#fff;";
     
     overlay.innerHTML = `
-        <div style="background:#222; padding:25px; border-radius:15px; text-align:center; width:300px; border:2px solid #4da6ff;">
-            <h3 id="cc-title" style="color:#4da6ff; margin-bottom:10px;">🎨 色変更アイテム</h3>
-            <p id="cc-desc" style="font-size:12px; color:#aaa; margin-bottom:20px;">色を選択</p>
-            <div id="cc-color-buttons" style="display:flex; justify-content:center; gap:10px; flex-wrap:wrap; margin-bottom:20px;">
+        <div style="background:#222; padding:20px; border-radius:15px; text-align:center; width:310px; border:2px solid #4da6ff;">
+            <h3 style="color:#4da6ff; margin-bottom:12px; font-size:16px;">🎨 色変更アイテム</h3>
+            
+            <!-- 上段：変えたい色の玉 -->
+            <div id="cc-step1-section" style="transition: opacity 0.3s;">
+                <p style="font-size:12px; color:#ffcc00; margin-bottom:6px; font-weight:bold;">1. 変えたい色の玉を選択</p>
+                <div id="cc-src-buttons" style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap; margin-bottom:5px;"></div>
             </div>
-            <button id="btn-cancel-cc" class="menu-btn gray" style="touch-action:manipulation; font-size:12px; padding:8px;">キャンセル</button>
+
+            <!-- 中央の大きな↓表示 -->
+            <div style="font-size:28px; font-weight:bold; color:#4da6ff; margin:4px 0; text-shadow:0 0 8px rgba(77,166,255,0.6);">↓</div>
+
+            <!-- 下段：変更先の色の玉 -->
+            <div id="cc-step2-section" style="opacity:0.3; pointer-events:none; transition: opacity 0.3s;">
+                <p style="font-size:12px; color:#4dff4d; margin-bottom:6px; font-weight:bold;">2. 変更先の色の玉を選択</p>
+                <div id="cc-dst-buttons" style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap; margin-bottom:12px;"></div>
+            </div>
+
+            <button id="btn-cancel-cc" class="menu-btn gray" style="touch-action:manipulation; font-size:12px; padding:8px; width:120px; margin:0 auto;">キャンセル</button>
         </div>
     `;
     document.body.appendChild(overlay);
 
-    let btnContainer = document.getElementById('cc-color-buttons');
+    let srcContainer = document.getElementById('cc-src-buttons');
+    let dstContainer = document.getElementById('cc-dst-buttons');
+
     BASE_COLORS.forEach(col => {
-        let btn = document.createElement('button');
-        btn.style.cssText = `width:45px; height:45px; border-radius:50%; background:${col}; border:3px solid #fff; cursor:pointer; touch-action:manipulation;`;
+        // 変えたい色ボタン (Step 1)
+        let srcBtn = document.createElement('button');
+        srcBtn.className = 'cc-src-btn';
+        srcBtn.style.cssText = `width:40px; height:40px; border-radius:50%; background:${col}; border:3px solid #fff; cursor:pointer; touch-action:manipulation;`;
         ['touchstart', 'click'].forEach(evt => {
-            btn.addEventListener(evt, (e) => {
+            srcBtn.addEventListener(evt, (e) => {
                 e.preventDefault();
-                handleColorChangeSelection(col);
+                handleColorChangeStep1(col, srcBtn);
             }, { passive: false });
         });
-        btnContainer.appendChild(btn);
+        srcContainer.appendChild(srcBtn);
+
+        // 変更先の色ボタン (Step 2)
+        let dstBtn = document.createElement('button');
+        dstBtn.className = 'cc-dst-btn';
+        dstBtn.style.cssText = `width:40px; height:40px; border-radius:50%; background:${col}; border:3px solid #fff; cursor:pointer; touch-action:manipulation;`;
+        ['touchstart', 'click'].forEach(evt => {
+            dstBtn.addEventListener(evt, (e) => {
+                e.preventDefault();
+                handleColorChangeStep2(col);
+            }, { passive: false });
+        });
+        dstContainer.appendChild(dstBtn);
     });
 
     ['touchstart', 'click'].forEach(evt => {
@@ -820,28 +852,38 @@ function createColorChangeOverlayDOM() {
     });
 }
 
-function handleColorChangeSelection(col) {
-    if (colorChangeStep === 1) {
-        colorChangeSourceColor = col;
-        openColorChangeStep2Overlay();
-    } else if (colorChangeStep === 2) {
-        let targetColor = col;
-        document.getElementById('colorchange-overlay').style.display = 'none';
-        
-        for (let r = 0; r < ROWS; r++) {
-            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-            for (let c = 0; c < colsInRow; c++) {
-                let cell = grid[r][c];
-                if (cell !== null && cell.color === colorChangeSourceColor) {
-                    grid[r][c].color = targetColor;
-                }
+function handleColorChangeStep1(col, btnElement) {
+    colorChangeSourceColor = col;
+    colorChangeStep = 2;
+
+    // 選択されたボタンを強調
+    document.querySelectorAll('.cc-src-btn').forEach(b => b.style.borderColor = '#fff');
+    btnElement.style.borderColor = '#ffcc00';
+
+    // 下段を有効化し、上段を少し暗くする
+    document.getElementById('cc-step1-section').style.opacity = '0.4';
+    document.getElementById('cc-step2-section').style.opacity = '1';
+    document.getElementById('cc-step2-section').style.pointerEvents = 'auto';
+}
+
+function handleColorChangeStep2(targetColor) {
+    if (colorChangeStep !== 2) return;
+    
+    document.getElementById('colorchange-overlay').style.display = 'none';
+    
+    for (let r = 0; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            let cell = grid[r][c];
+            if (cell !== null && cell.color === colorChangeSourceColor) {
+                grid[r][c].color = targetColor;
             }
         }
-        playSE(se.rainbowLand);
-        hasItem[4] = false;
-        if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
-            startTurnTimer(); // タイマー再開
-        }
+    }
+    playSE(se.rainbowLand);
+    hasItem[4] = false;
+    if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
+        startTurnTimer(); // タイマー再開
     }
 }
 
@@ -857,7 +899,7 @@ function clickItemButton(idx) {
 
     activeItem = idx;
     if (idx === 4) {
-        openColorChangeStep1Overlay();
+        openColorChangeOverlay();
     }
 }
 
