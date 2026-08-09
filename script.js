@@ -648,7 +648,7 @@ function executeOpponentAction(data) {
     }
 }
 
-// 💥 下から飛来して、上にある既存の玉にヒットして定着する演出
+// 💥 下から飛来して、上の空きマス（グリッド）に綺麗に定着する演出
 function launchOjamaProjectilesFromBottom(amount) {
     if (amount <= 0) return;
     let safeAmount = Math.min(amount, 10);
@@ -662,15 +662,18 @@ function launchOjamaProjectilesFromBottom(amount) {
         setTimeout(() => {
             let startX = Math.random() * 260 + 50;
             let startY = canvas.height + 40; 
-            let color = getRandomGridColor(); // 普通に消せる通常カラーに設定
+            let color = getRandomGridColor(); 
             
-            // 下から上に真っ直ぐ飛ばし、既存の玉（または上部）にぶつかったら止まるようにターゲットを計算
-            let targetY = findOjamaTargetY(startX);
+            // 下から上に飛ばし、上にある適切なグリッド座標にヒットして止まるように計算
+            let targetCoords = findLowestAvailableGridCoords();
+            let targetPos = getPixelCoords(targetCoords.r, targetCoords.c);
             
             flyingOjamaList.push({
                 x: startX,
                 y: startY,
-                targetY: targetY,
+                targetY: targetPos.y,
+                targetR: targetCoords.r,
+                targetC: targetCoords.c,
                 color: color,
                 vy: -(7 + Math.random() * 3) 
             });
@@ -678,48 +681,43 @@ function launchOjamaProjectilesFromBottom(amount) {
     }
 }
 
-// 既存の玉の下側に綺麗に定着するための高さを計算する関数
-function findOjamaTargetY(x) {
-    let bestR = 0;
-    let bestC = Math.floor(x / DIAMETER);
-    bestC = Math.max(0, Math.min(COLS - 1, bestC));
-
-    // 上から順に埋まっているセルを探し、その真下に置く
+// 下から飛来するお邪魔玉の着地先として、最も低い空きマス（一番上から順に空いている場所、または下側の空きマス）を割り当てる関数
+function findLowestAvailableGridCoords() {
+    // 上から順にチェックし、最初に見つかった空きマスをターゲットにする
     for (let r = 0; r < ROWS; r++) {
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        let c = Math.min(bestC, colsInRow - 1);
-        if (grid[r][c] !== null) {
-            bestR = Math.max(0, r - 1);
-            let pos = getPixelCoords(bestR, c);
-            return pos.y;
-        }
-    }
-    // もし上部に一切玉がない場合は、一番上の行に配置する
-    let topPos = getPixelCoords(0, bestC);
-    return topPos.y;
-}
-
-function applyOjamaToGrid(color) {
-    let placed = false;
-    // 下から順に空いているマスを探して埋める（消せるお邪魔玉としてセット）
-    for (let r = ROWS - 1; r >= 0; r--) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
             if (grid[r][c] === null) {
-                grid[r][c] = { color: color, isOjama: true }; // isOjamaをtrueにしつつ消せる色にする
-                placed = true;
-                break;
+                return { r, c };
             }
         }
-        if (placed) break;
+    }
+    return { r: 0, c: 0 };
+}
+
+function applyOjamaToGrid(color, targetR, targetC) {
+    let placed = false;
+
+    // 指定された座標が空いていればそこに配置、埋まっていたら上から順に空きマスを探す
+    if (targetR >= 0 && targetR < ROWS) {
+        let colsInRow = (targetR % 2 === 0) ? COLS : COLS - 1;
+        if (targetC >= 0 && targetC < colsInRow && grid[targetR][targetC] === null) {
+            grid[targetR][targetC] = { color: color, isOjama: true };
+            placed = true;
+        }
     }
 
     if (!placed) {
-        for (let c = 0; c < COLS; c++) {
-            if (grid[0][c] === null) {
-                grid[0][c] = { color: color, isOjama: true };
-                break;
+        for (let r = 0; r < ROWS; r++) {
+            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+            for (let c = 0; c < colsInRow; c++) {
+                if (grid[r][c] === null) {
+                    grid[r][c] = { color: color, isOjama: true };
+                    placed = true;
+                    break;
+                }
             }
+            if (placed) break;
         }
     }
 
@@ -1276,7 +1274,7 @@ function update() {
         let oj = flyingOjamaList[i];
         oj.y += oj.vy; 
         if (oj.y <= oj.targetY) {
-            applyOjamaToGrid(oj.color);
+            applyOjamaToGrid(oj.color, oj.targetR, oj.targetC);
             flyingOjamaList.splice(i, 1);
             
             if (flyingOjamaList.length === 0 && gameMode === 'battle' && battleType === 'お邪魔対戦' && battleTurnState === 'opponent_turn') {
@@ -1518,16 +1516,7 @@ function draw() {
                 let pos = getPixelCoords(r, c);
                 if (cell.color === UNBREAKABLE_COLOR) drawUnbreakableBubble(pos.x, pos.y, RADIUS);
                 else {
-                    drawBubble(pos.x, pos.y, cell.color, RADIUS);
-                    if (cell.isOjama) {
-                        ctx.fillStyle = "#ffffff";
-                        ctx.font = "bold 11px sans-serif";
-                        ctx.textAlign = "center";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText("×", pos.x, pos.y);
-                        ctx.textAlign = "left";
-                        ctx.textBaseline = "alphabetic";
-                    }
+                    drawBubble(pos.x, pos.y, cell.color, RADIUS, cell.isOjama);
                 }
             }
         }
@@ -1543,17 +1532,10 @@ function draw() {
         }
     }
 
-    for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS);
+    for (let fb of fallingBubbles) drawBubble(fb.x, fb.y, fb.color, RADIUS, false);
 
     for (let oj of flyingOjamaList) {
-        drawBubble(oj.x, oj.y, oj.color, RADIUS);
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 11px sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("×", oj.x, oj.y);
-        ctx.textAlign = "left";
-        ctx.textBaseline = "alphabetic";
+        drawBubble(oj.x, oj.y, oj.color, RADIUS, true);
     }
 
     if (isDragging) {
@@ -1567,11 +1549,11 @@ function draw() {
         }
         ctx.beginPath(); ctx.moveTo(shooterX, shooterY); ctx.lineTo(shooterX + pullX, shooterY + pullY);
         ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 4; ctx.stroke(); ctx.closePath();
-        drawBubble(shooterX + pullX, shooterY + pullY, bulletColor, RADIUS);
+        drawBubble(shooterX + pullX, shooterY + pullY, bulletColor, RADIUS, false);
     } else if (isMoving) {
-        drawBubble(bulletX, bulletY, bulletColor, RADIUS);
+        drawBubble(bulletX, bulletY, bulletColor, RADIUS, false);
     } else {
-        drawBubble(shooterX, shooterY, bulletColor, RADIUS);
+        drawBubble(shooterX, shooterY, bulletColor, RADIUS, false);
     }
 
     if (attackNoticeTimer > 0) {
@@ -1637,13 +1619,16 @@ function drawBattleResultScreen() {
     drawParticles();
 }
 
-function drawBubble(x, y, color, r) {
+function drawBubble(x, y, color, r, isOjama = false) {
     if (customImages[color]) {
         ctx.save();
         ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.clip();
         ctx.drawImage(customImages[color], x - r, y - r, r * 2, r * 2);
         ctx.restore();
-        ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
+        ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); 
+        ctx.strokeStyle = isOjama ? "#ff4d4d" : "#fff"; 
+        ctx.lineWidth = isOjama ? 3.5 : 2; 
+        ctx.stroke(); ctx.closePath();
         return;
     }
     ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2);
@@ -1657,7 +1642,10 @@ function drawBubble(x, y, color, r) {
         ctx.fillStyle = "#ff5722"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText("💣", x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     } else {
-        ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = color; ctx.fill(); 
+        ctx.strokeStyle = isOjama ? "#ff4d4d" : "#fff"; 
+        ctx.lineWidth = isOjama ? 3.5 : 2; 
+        ctx.stroke();
     }
     ctx.closePath();
 }
