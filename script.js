@@ -648,7 +648,7 @@ function executeOpponentAction(data) {
     }
 }
 
-// 💥 下から飛来して、上の空きマス（グリッド）に綺麗に定着する演出
+// 💥 下から飛来して、上の空きマスに綺麗に定着する演出（iPhoneでのすり抜け完全防止版）
 function launchOjamaProjectilesFromBottom(amount) {
     if (amount <= 0) return;
     let safeAmount = Math.min(amount, 10);
@@ -664,7 +664,6 @@ function launchOjamaProjectilesFromBottom(amount) {
             let startY = canvas.height + 40; 
             let color = getRandomGridColor(); 
             
-            // 下から上に飛ばし、上にある適切なグリッド座標にヒットして止まるように計算
             let targetCoords = findLowestAvailableGridCoords();
             let targetPos = getPixelCoords(targetCoords.r, targetCoords.c);
             
@@ -675,15 +674,13 @@ function launchOjamaProjectilesFromBottom(amount) {
                 targetR: targetCoords.r,
                 targetC: targetCoords.c,
                 color: color,
-                vy: -(7 + Math.random() * 3) 
+                vy: -(8 + Math.random() * 2) 
             });
         }, i * 120);
     }
 }
 
-// 下から飛来するお邪魔玉の着地先として、最も低い空きマス（一番上から順に空いている場所、または下側の空きマス）を割り当てる関数
 function findLowestAvailableGridCoords() {
-    // 上から順にチェックし、最初に見つかった空きマスをターゲットにする
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
         for (let c = 0; c < colsInRow; c++) {
@@ -698,7 +695,6 @@ function findLowestAvailableGridCoords() {
 function applyOjamaToGrid(color, targetR, targetC) {
     let placed = false;
 
-    // 指定された座標が空いていればそこに配置、埋まっていたら上から順に空きマスを探す
     if (targetR >= 0 && targetR < ROWS) {
         let colsInRow = (targetR % 2 === 0) ? COLS : COLS - 1;
         if (targetC >= 0 && targetC < colsInRow && grid[targetR][targetC] === null) {
@@ -1270,6 +1266,7 @@ function update() {
     if (attackNoticeTimer > 0) attackNoticeTimer--;
     if (shakeTimer > 0) shakeTimer--;
 
+    // iPhone環境でも確実にお邪魔玉を目標位置にストップさせるループ
     for (let i = flyingOjamaList.length - 1; i >= 0; i--) {
         let oj = flyingOjamaList[i];
         oj.y += oj.vy; 
@@ -1582,7 +1579,7 @@ function drawTitleBackground() {
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    ctx.fillText("Ver 1.08", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.09", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
 
