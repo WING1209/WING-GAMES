@@ -1,19 +1,35 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// --- 🔊 サウンド（SE & BGM）設定 ---
-const audioPath = 'audio/';
+// --- 📱 キャンバスの解像度動的設定（スマホ実機・高解像度対応） ---
+function resizeCanvas() {
+    const container = document.getElementById('game-container');
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = 400 * dpr;
+    canvas.height = 750 * dpr;
+    ctx.scale(dpr, dpr);
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
 
-const se = {
-    ballShoot:   new Audio(`${audioPath}se/se_ball_shoot.wav`),
-    ballLand:    new Audio(`${audioPath}se/se_ball_land.wav`),
-    bombExplode: new Audio(`${audioPath}se/se_bomb_explode.wav`),
-    rainbowLand: new Audio(`${audioPath}se/se_rainbow_land.wav`),
-    rainbowSet:  new Audio(`${audioPath}se/se_rainbow_set.wav`),
-    blockFall:   new Audio(`${audioPath}se/se_block_fall.wav`),
-    gameOver:    new Audio(`${audioPath}se/se_game_over.mp3`),
-    stageClear:  new Audio(`${audioPath}se/se_stage_clear.wav`)
+// --- 🔊 サウンド（SE & BGM）プーリング・安全対策設定 ---
+const audioPath = 'audio/';
+const seFiles = {
+    ballShoot:   `${audioPath}se/se_ball_shoot.wav`,
+    ballLand:    `${audioPath}se/se_ball_land.wav`,
+    bombExplode: `${audioPath}se/se_bomb_explode.wav`,
+    rainbowLand: `${audioPath}se/se_rainbow_land.wav`,
+    rainbowSet:  `${audioPath}se/se_rainbow_set.wav`,
+    blockFall:   `${audioPath}se/se_block_fall.wav`,
+    gameOver:    `${audioPath}se/se_game_over.mp3`,
+    stageClear:  `${audioPath}se/se_stage_clear.wav`
 };
+
+const se = {};
+Object.keys(seFiles).forEach(key => {
+    se[key] = new Audio(seFiles[key]);
+    se[key].preload = 'auto';
+});
 
 let audioUnlocked = false;
 function unlockAudio() {
@@ -97,7 +113,7 @@ let roomCode = '';
 let gameState = 'title';
 
 let shooterX = 200; 
-let shooterY = canvas.height - 70;
+let shooterY = 750 - 70;
 let bulletX = shooterX;
 let bulletY = shooterY;
 let bulletVX = 0;
@@ -264,6 +280,8 @@ function setupRole(role) {
         peer.on('connection', (c) => {
             conn = c;
             setupConnectionListeners();
+            // 接続確立時にハンドシェイク用ACKを送信
+            if (conn && conn.open) conn.send({ type: 'handshake_ack' });
             showScreen('screen-host-rule-setup');
         });
         peer.on('error', () => {
@@ -305,16 +323,18 @@ function setupConnectionListeners() {
     });
 
     conn.on('data', (data) => {
-        if (gameState !== 'playing') return;
-
         if (battleRole === 'guest') {
-            if (data.type === 'show_rules') {
+            if (data.type === 'handshake_ack') {
+                showScreen('screen-guest-wait-rule');
+            } else if (data.type === 'show_rules') {
                 targetWins = data.targetWins;
                 battleType = data.battleType;
+                // ルール受信成功の確認応答をホストへ返信（同期ズレ防止）
+                if (conn && conn.open) conn.send({ type: 'rules_received_ack' });
                 displayBattleRulesDesc();
             } else if (data.type === 'ready_start') {
                 executeBattleStart();
-            } else if (data.type === 'sync_attack' && battleType === 'お邪魔対戦') {
+            } else if (data.type === 'sync_attack' && battleType === 'お邪魔対戦' && gameState === 'playing') {
                 launchOjamaProjectiles(data.amount);
             } else if (data.type === 'sync_round_end') {
                 myWins = data.guestWins;
@@ -326,7 +346,10 @@ function setupConnectionListeners() {
                 startNextRound();
             }
         } else {
-            if (data.type === 'guest_request_attack' && battleType === 'お邪魔対戦') {
+            // ホスト側
+            if (data.type === 'rules_received_ack') {
+                // ゲストが確実にルール画面を表示したことを確認済み
+            } else if (data.type === 'guest_request_attack' && battleType === 'お邪魔対戦' && gameState === 'playing') {
                 launchOjamaProjectiles(data.amount);
                 if (conn && conn.open) conn.send({ type: 'sync_attack', amount: data.amount });
             } else if (data.type === 'guest_request_round_win') {
@@ -341,7 +364,7 @@ function setupConnectionListeners() {
     });
 
     conn.on('close', () => {
-        if (gameState === 'playing' || gameState === 'battle_result') {
+        if (gameState === 'playing' || gameState === 'battle_result' || gameState === 'round_ended') {
             alert('相手との通信が切断されました');
             returnToTitle();
         }
@@ -440,7 +463,7 @@ function requestAttackToOpponent(amount) {
 }
 
 function launchOjamaProjectiles(amount) {
-    if (amount <= 0) return;
+    if (amount <= 0 || gameState !== 'playing') return;
     let safeAmount = Math.min(amount, 10);
 
     attackNoticeText = `⚠️ お邪魔玉 +${safeAmount} 飛来中！`;
@@ -450,14 +473,15 @@ function launchOjamaProjectiles(amount) {
 
     for (let i = 0; i < safeAmount; i++) {
         setTimeout(() => {
+            if (gameState !== 'playing') return;
             let startX = Math.random() * 260 + 50;
-            let startY = canvas.height + 30;
+            let startY = 750 + 30;
             let color = getRandomGridColor();
             
             flyingOjamaList.push({
                 x: startX,
                 y: startY,
-                targetY: canvas.height * 0.45,
+                targetY: 750 * 0.45,
                 color: color,
                 vy: -12 - Math.random() * 6
             });
@@ -466,6 +490,7 @@ function launchOjamaProjectiles(amount) {
 }
 
 function applyOjamaToGrid(color) {
+    if (gameState !== 'playing') return;
     let placed = false;
     for (let r = ROWS - 1; r >= 0; r--) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
@@ -560,11 +585,13 @@ function checkClearCondition() {
     if (!hasBreakable) {
         playSE(se.stageClear);
         if (gameMode === 'battle') {
-            if (battleRole === 'host') {
-                triggerHostRoundDecide('HOST');
-            } else {
+            if (gameState === 'playing') {
                 gameState = 'round_ended';
-                if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
+                if (battleRole === 'host') {
+                    triggerHostRoundDecide('HOST');
+                } else {
+                    if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
+                }
             }
         } else {
             if (currentStage < maxStages) {
@@ -587,7 +614,7 @@ function triggerSoloGameOver(msg) {
     stopBGM();
     playSE(se.gameOver);
     gameState = 'gameover_menu';
-    document.getElementById('gameover-score-text').innerText = `${msg}\nスコア: ${score}`;
+    document.getElementById('gameover-score-text').innerText =`${msg}\nスコア: ${score}`;
     showScreen('screen-game-over');
 }
 
@@ -599,12 +626,14 @@ function checkGameOverCondition() {
     for (let cc = 0; cc < rowCols; cc++) {
         if (grid[r][cc] !== null) {
             if (gameMode === 'battle') {
-                stopBGM();
-                if (battleRole === 'host') {
-                    triggerHostRoundDecide('GUEST');
-                } else {
+                if (gameState === 'playing') {
                     gameState = 'round_ended';
-                    if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
+                    stopBGM();
+                    if (battleRole === 'host') {
+                        triggerHostRoundDecide('GUEST'); // ホスト側の最下段到達＝ゲストの勝ち
+                    } else {
+                        if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
+                    }
                 }
             } else {
                 triggerSoloGameOver(`ステージ ${currentStage} で終了`);
@@ -615,8 +644,7 @@ function checkGameOverCondition() {
 }
 
 function triggerHostRoundDecide(roundWinner) {
-    if (battleRole !== 'host') return;
-    gameState = 'round_ended';
+    if (battleRole !== 'host' || gameState !== 'round_ended') return;
 
     if (roundWinner === 'HOST') {
         myWins++;
@@ -692,11 +720,11 @@ function initWinParticles() {
 }
 
 function spawnFirework() {
-    const x = Math.random() * (canvas.width - 120) + 50;
-    const targetY = Math.random() * (canvas.height * 0.4) + 50;
+    const x = Math.random() * (400 - 120) + 50;
+    const targetY = Math.random() * (750 * 0.4) + 50;
     fireworks.push({
         x: x,
-        y: canvas.height,
+        y: 750,
         targetY: targetY,
         vy: -7 - Math.random() * 3,
         color: BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)]
@@ -727,8 +755,8 @@ function initLoseParticles() {
     for (let i = 0; i < 80; i++) {
         particles.push({
             type: 'rain',
-            x: Math.random() * canvas.width,
-            y: Math.random() * canvas.height,
+            x: Math.random() * 400,
+            y: Math.random() * 750,
             len: Math.random() * 15 + 10,
             vy: Math.random() * 6 + 10,
             color: 'rgba(120, 160, 255, 0.6)'
@@ -760,9 +788,9 @@ function updateParticles() {
             if (p.alpha <= 0) particles.splice(i, 1);
         } else if (p.type === 'rain') {
             p.y += p.vy;
-            if (p.y > canvas.height) {
+            if (p.y > 750) {
                 p.y = -20;
-                p.x = Math.random() * canvas.width;
+                p.x = Math.random() * 400;
             }
         }
     }
@@ -850,19 +878,20 @@ function showRankingBoard() {
     showScreen('screen-ranking');
 }
 
+// --- 🎯 正確なタッチ座標計算（スマホの画面比率対応） ---
 function getTouchPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
     let clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
     
-    let scaleX = canvas.width / rect.width;
-    let scaleY = canvas.height / rect.height;
+    let scaleX = 400 / rect.width;
+    let scaleY = 750 / rect.height;
 
     let x = (clientX - rect.left) * scaleX;
     let y = (clientY - rect.top) * scaleY;
 
-    x = Math.max(0, Math.min(canvas.width, x));
-    y = Math.max(0, Math.min(canvas.height, y));
+    x = Math.max(0, Math.min(400, x));
+    y = Math.max(0, Math.min(750, y));
 
     return { x, y };
 }
@@ -1066,7 +1095,7 @@ function update() {
     for (let i = fallingBubbles.length - 1; i >= 0; i--) {
         let fb = fallingBubbles[i];
         fb.y += fb.vy; fb.vy += 0.6;
-        if (fb.y > canvas.height + 50) fallingBubbles.splice(i, 1);
+        if (fb.y > 750 + 50) fallingBubbles.splice(i, 1);
     }
 
     for (let i = flashingBubbles.length - 1; i >= 0; i--) {
@@ -1208,7 +1237,7 @@ function snapBullet() {
 }
 
 function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, 400, 750);
 
     if (gameState === 'title') { drawTitleBackground(); return; }
     if (gameState === 'gameclear') { drawGameClearScreen(); return; }
@@ -1222,10 +1251,10 @@ function draw() {
     }
 
     ctx.fillStyle = "#1a1a1a";
-    ctx.fillRect(305, 0, 95, canvas.height);
+    ctx.fillRect(305, 0, 95, 750);
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(305, 0); ctx.lineTo(305, canvas.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(305, 0); ctx.lineTo(305, 750); ctx.stroke();
 
     ctx.fillStyle = "#fff";
     ctx.font = "bold 11px sans-serif";
@@ -1342,15 +1371,15 @@ function draw() {
     if (attackNoticeTimer > 0) {
         ctx.save();
         ctx.fillStyle = "rgba(255, 0, 0, 0.85)";
-        ctx.fillRect(10, canvas.height / 2 - 30, 285, 50);
+        ctx.fillRect(10, 750 / 2 - 30, 285, 50);
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 3;
-        ctx.strokeRect(10, canvas.height / 2 - 30, 285, 50);
+        ctx.strokeRect(10, 750 / 2 - 30, 285, 50);
 
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 14px sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(attackNoticeText, 152, canvas.height / 2 + 2);
+        ctx.fillText(attackNoticeText, 152, 750 / 2 + 2);
         ctx.restore();
     }
 
@@ -1359,46 +1388,46 @@ function draw() {
 
 function drawTitleBackground() {
     ctx.fillStyle = "#1a1a1a";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, 400, 750);
 
     ctx.save();
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    ctx.fillText("Ver 1.03", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.04", 400 / 2, 750 / 2 + 75);
     ctx.restore();
 }
 
 function drawGameClearScreen() {
     ctx.fillStyle = "#111";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, 400, 750);
     drawParticles();
 
     ctx.save();
     ctx.textAlign = "center";
     ctx.font = "bold 22px sans-serif";
     ctx.fillStyle = "#4dff4d";
-    ctx.fillText("🎉 完全攻略！ 🎉", canvas.width / 2, canvas.height / 2 - 90);
+    ctx.fillText("🎉 完全攻略！ 🎉", 400 / 2, 750 / 2 - 90);
 
     let colorIndex = Math.floor(Date.now() / 200) % BASE_COLORS.length;
     ctx.font = "900 26px 'Segoe UI', sans-serif";
     ctx.fillStyle = BASE_COLORS[colorIndex];
-    ctx.fillText("CONGRATULATIONS!", canvas.width / 2, canvas.height / 2 - 40);
+    ctx.fillText("CONGRATULATIONS!", 400 / 2, 750 / 2 - 40);
 
     ctx.font = "bold 18px sans-serif";
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(`ALL STAGE CLEAR!`, canvas.width / 2, canvas.height / 2 + 10);
-    ctx.fillText(`TIME: ${totalClearTime}秒 / SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 45);
+    ctx.fillText(`ALL STAGE CLEAR!`, 400 / 2, 750 / 2 + 10);
+    ctx.fillText(`TIME: ${totalClearTime}秒 / SCORE: ${score}`, 400 / 2, 750 / 2 + 45);
 
     ctx.font = "14px sans-serif";
     ctx.fillStyle = "#4da6ff";
-    ctx.fillText("画面をタップしてランキング登録へ ➔", canvas.width / 2, canvas.height / 2 + 100);
+    ctx.fillText("画面をタップしてランキング登録へ ➔", 400 / 2, 750 / 2 + 100);
     ctx.restore();
 }
 
 function drawBattleResultScreen() {
     ctx.fillStyle = "#111";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, 400, 750);
     drawParticles();
 }
 
