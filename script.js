@@ -109,12 +109,13 @@ let turnRemainingTime = TURN_TIME_LIMIT;
 let turnTimerInterval = null;
 
 // --- 🎁 アイテムシステム管理変数 ---
-let hasItem = [false, false, false, false]; // インデックス 0:お邪魔×2, 1:スキップ, 2:跳ね返し×2, 3:色変更
-let activeItem = null; // 現在選択中の発動待機アイテム (0~3)
+// インデックス 0:お邪魔×2, 1:スキップ, 2:貫通, 3:色変更
+let hasItem = [false, false, false, false]; 
+let activeItem = null; 
 let isRouletteActive = false;
 let rouletteItemIndex = 0;
 let rouletteInterval = null;
-let colorChangeStep = 0; // 0:未選択, 1:変えたい色選択中, 2:変更先の基準色選択中
+let colorChangeStep = 0; 
 let colorChangeSourceColor = '';
 
 let shooterX = 200; 
@@ -240,12 +241,23 @@ function forceTimeoutTurnEnd() {
     switchTurnToOpponent();
 }
 
+function isMysteryAllowedInGrid() {
+    for (let r = 0; r < ROWS; r++) {
+        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+        for (let c = 0; c < colsInRow; c++) {
+            if (grid[r][c] !== null && grid[r][c].isMystery) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 function getRandomGridCell() {
     let color = BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
     let isMystery = false;
     if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
-        // 3ターンに1回（約33%）の確率で「？」の内部抽選
-        if (Math.random() < (1 / 3)) {
+        if (Math.random() < 0.11 && isMysteryAllowedInGrid()) {
             isMystery = true;
         }
     }
@@ -255,7 +267,7 @@ function getRandomGridCell() {
 function getRandomShooterBubble() {
     let isMystery = false;
     if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
-        if (Math.random() < (1 / 3)) {
+        if (Math.random() < 0.11 && isMysteryAllowedInGrid()) {
             isMystery = true;
         }
     }
@@ -467,7 +479,7 @@ function displayBattleRulesDesc() {
     if (battleType === 'タイムアタック') {
         desc = `<b>【⏱️ タイムアタック】</b><br>画面上の消せる玉を相手より先にすべて消した方の勝利！<br><br>• 勝利条件: ${targetWins}勝先取`;
     } else {
-        desc = `<b>【⚔️ ターン制お邪魔対戦】</b><br>じゃんけんで先攻後攻を決定！交互に玉を打ちます。<br>3ターンに1回ランダム出現する「？」付きの玉を消すとアイテムルーレットが発生！<br><br>• 勝利条件: ${targetWins}勝先取`;
+        desc = `<b>【⚔️ ターン制お邪魔対戦】</b><br>じゃんけんで先攻後攻を決定！交互に玉を打ちます。<br>出現する「？」付きの玉を消すとアイテムルーレットが発生！<br><br>• 勝利条件: ${targetWins}勝先取`;
     }
     document.getElementById('rules-text-content').innerHTML = desc;
     showScreen('screen-battle-rules-desc');
@@ -674,7 +686,7 @@ function executeOpponentAction(data) {
     let actualOjama = data.ojamaAmount;
 
     if (activeItemUsed === 2 && actualOjama > 0) {
-        actualOjama *= 2;
+        actualOjama = 0; // 貫通攻撃を防御（相殺）
     }
 
     if (actualOjama > 0) {
@@ -706,12 +718,12 @@ function triggerItemRoulette() {
 
     rouletteInterval = setInterval(() => {
         rouletteItemIndex = (rouletteItemIndex + 1) % 4;
-        let names = ['① お邪魔×2', '② スキップ', '③ 跳ね返し×2', '④ 色変更'];
+        let names = ['① お邪魔×2', '② スキップ', '③ 貫通', '④ 色変更'];
         let descList = [
             '【お邪魔×2】お邪魔玉の数が倍増！',
             '【スキップ】相手に1回休みを付与！',
-            '【跳ね返し×2】受けるお邪魔玉を倍返し！',
-            '• 【色変更】指定した色の玉を別の色へ一斉変更！'
+            '【貫通】壁・玉を突き抜け直進＆全消し！',
+            '【色変更】指定した色の玉を別の色へ一斉変更！'
         ];
         document.getElementById('roulette-display-box').innerText = names[rouletteItemIndex];
         document.getElementById('roulette-desc-box').innerText = descList[rouletteItemIndex];
@@ -760,6 +772,7 @@ function stopItemRoulette() {
 
 // --- 🎨 色変更アイテム選択オーバーレイ ---
 function openColorChangeStep1Overlay() {
+    stopTurnTimer(); // タイマー一時停止
     let container = document.getElementById('colorchange-overlay');
     if (!container) {
         createColorChangeOverlayDOM();
@@ -811,6 +824,9 @@ function createColorChangeOverlayDOM() {
             e.preventDefault();
             document.getElementById('colorchange-overlay').style.display = 'none';
             activeItem = null;
+            if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
+                startTurnTimer(); // タイマー再開
+            }
         }, { passive: false });
     });
 }
@@ -834,7 +850,10 @@ function handleColorChangeSelection(col) {
         }
         playSE(se.rainbowLand);
         hasItem[3] = false;
-        activeItem = null;
+        // activeItem は維持したまま（ターン終了させず発射できるようにする）
+        if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
+            startTurnTimer(); // タイマー再開
+        }
     }
 }
 
@@ -852,6 +871,54 @@ function clickItemButton(idx) {
     if (idx === 3) {
         openColorChangeStep1Overlay();
     }
+}
+
+// 軌道の壁反射回数をシミュレーションしてチェックする関数
+function countWallReflections(launchAngle, speed) {
+    let simX = shooterX;
+    let simY = shooterY;
+    let simVX = Math.cos(launchAngle) * speed;
+    let simVY = Math.sin(launchAngle) * speed;
+    let reflections = 0;
+
+    let steps = 0;
+    while (steps < 300) {
+        steps++;
+        simX += simVX / 4;
+        simY += simVY / 4;
+
+        if (simX - RADIUS <= 0) {
+            simX = RADIUS;
+            simVX *= -1;
+            reflections++;
+        } else if (simX + RADIUS >= 305) {
+            simX = 305 - RADIUS;
+            simVX *= -1;
+            reflections++;
+        }
+
+        if (simY - RADIUS <= TOP_MARGIN) {
+            break;
+        }
+
+        // 玉との衝突判定
+        let hit = false;
+        for (let r = 0; r < ROWS; r++) {
+            let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+            for (let c = 0; c < colsInRow; c++) {
+                if (grid[r][c] !== null) {
+                    let pos = getPixelCoords(r, c);
+                    if (Math.hypot(simX - pos.x, simY - pos.y) <= DIAMETER - 2) {
+                        hit = true;
+                        break;
+                    }
+                }
+            }
+            if (hit) break;
+        }
+        if (hit) break;
+    }
+    return reflections;
 }
 
 function launchOjamaProjectilesFromBottom(amount) {
@@ -1388,6 +1455,17 @@ function releaseBullet() {
     let launchAngle = Math.atan2(-pullY, -pullX);
     
     if (launchAngle < -0.05 && launchAngle > -Math.PI + 0.05) {
+        // 貫通アイテム（index 2）選択時の壁反射制限チェック
+        if (activeItem === 2) {
+            let reflections = countWallReflections(launchAngle, speed);
+            if (reflections > 2) {
+                attackNoticeText = "⚠️ 左右の壁への反射が多すぎます (最大2回まで)";
+                attackNoticeTimer = 75;
+                pullX = 0; pullY = 0;
+                return;
+            }
+        }
+
         bulletVX = Math.cos(launchAngle) * speed;
         bulletVY = Math.sin(launchAngle) * speed;
         isMoving = true;
@@ -1566,6 +1644,32 @@ function update() {
                 stepVX *= -1;
             }
 
+            // 貫通アイテム有効時の処理（上部に接触するまで突き進む）
+            if (activeItem === 2) {
+                if (bulletY - RADIUS <= TOP_MARGIN) {
+                    bulletY = TOP_MARGIN + RADIUS;
+                    snapBullet();
+                    return;
+                }
+                // 接触した玉をすべて消す
+                for (let r = 0; r < ROWS; r++) {
+                    let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
+                    for (let c = 0; c < colsInRow; c++) {
+                        let cell = grid[r][c];
+                        if (cell !== null && cell.color !== UNBREAKABLE_COLOR) {
+                            let pos = getPixelCoords(r, c);
+                            if (Math.hypot(bulletX - pos.x, bulletY - pos.y) <= DIAMETER) {
+                                if (cell.isMystery) triggerItemRoulette();
+                                fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: cell.color, isMystery: cell.isMystery });
+                                grid[r][c] = null;
+                                score += 20;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
             if (bulletY - RADIUS <= TOP_MARGIN) {
                 bulletY = TOP_MARGIN + RADIUS;
                 snapBullet();
@@ -1589,12 +1693,18 @@ function update() {
 }
 
 function snapBullet() {
+    let wasPiercing = (activeItem === 2);
     isMoving = false;
     let cell = findCellForPosition(bulletX, bulletY);
     
     let generatedOjama = 0;
 
-    if (cell.r >= 0 && cell.r < ROWS) {
+    if (wasPiercing) {
+        playSE(se.bombExplode);
+        let floatCount = removeFloating();
+        // 貫通時は通った分のお邪魔を計算（消えた数）
+        generatedOjama = floatCount + 5;
+    } else if (cell.r >= 0 && cell.r < ROWS) {
         let colsInRow = (cell.r % 2 === 0) ? COLS : COLS - 1;
         cell.c = Math.max(0, Math.min(colsInRow - 1, cell.c));
 
@@ -1774,7 +1884,7 @@ function draw() {
     ctx.fillText("⚙️ 設定", 352, 570);
 
     if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
-        let itemNames = ['①お邪魔×2', '②スキップ', '③跳ね返し', '④色変更'];
+        let itemNames = ['①お邪魔×2', '②スキップ', '③貫通', '④色変更'];
         let itemStartY = 380;
         let itemBtnH = 35;
         let itemGap = 5;
@@ -1889,7 +1999,7 @@ function draw() {
         ctx.strokeRect(10, canvas.height / 2 - 30, 285, 50);
 
         ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 14px sans-serif";
+        ctx.font = "bold 13px sans-serif";
         ctx.textAlign = "center";
         ctx.fillText(attackNoticeText, 152, canvas.height / 2 + 2);
         ctx.restore();
@@ -1921,7 +2031,7 @@ function drawTitleBackground() {
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    ctx.fillText("Ver 1.11", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.12", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
 
@@ -1988,7 +2098,6 @@ function drawBubble(x, y, color, r, isOjama = false, isMystery = false) {
         ctx.closePath();
     }
 
-    // 既存の色玉の上に控えめな「？」マーク（またはグロー効果など）を重ねてミステリー玉であることを示す
     if (isMystery) {
         ctx.save();
         ctx.fillStyle = "#ffffff";
