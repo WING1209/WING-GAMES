@@ -441,7 +441,7 @@ function displayBattleRulesDesc() {
     if (battleType === 'タイムアタック') {
         desc = `<b>【⏱️ タイムアタック】</b><br>画面上の消せる玉を相手より先にすべて消した方の勝利！<br><br>・勝利条件: ${targetWins}勝先取`;
     } else {
-        desc = `<b>【⚔️ ターン制お邪魔対戦】</b><br>対戦開始時に1度だけじゃんけんで先攻後攻を決定！<br>以降は交互に玉を打ち、玉を消すと画面外の下からお邪魔玉が飛んできます。<br><br>・勝利条件: ${targetWins}勝先取`;
+        desc = `<b>【⚔️ ターン制お邪魔対戦】</b><br>対戦開始時および再戦時にじゃんけんで先攻後攻を決定！<br>以降は交互に玉を打ち、玉を消すと画面外の下からお邪魔玉が飛んできます。<br><br>・勝利条件: ${targetWins}勝先取`;
     }
     document.getElementById('rules-text-content').innerHTML = desc;
     showScreen('screen-battle-rules-desc');
@@ -494,15 +494,13 @@ function startNextRound() {
     gameState = 'playing';
     playRandomBGM();
     if (battleType === 'お邪魔対戦') {
-        showScreen('');
-        currentTurnPlayer = (currentTurnPlayer === 'host') ? 'guest' : 'host';
-        startBattleRoundLoop();
+        startJankenPhase(); // 再戦時にも必ずじゃんけんを挟むように修正
     } else {
         showScreen('');
     }
 }
 
-// --- ✊✌️✋ じゃんけんフェーズ（ゲーム開始時の1回のみ） ---
+// --- ✊✌️✋ じゃんけんフェーズ（ゲーム開始時および再戦時の毎回） ---
 function startJankenPhase() {
     battleTurnState = 'janken';
     myJankenChoice = '';
@@ -543,7 +541,7 @@ function createJankenOverlayDOM() {
     overlay.innerHTML = `
         <div style="background:#222; padding:30px; border-radius:15px; text-align:center; width:320px; border:2px solid #555;">
             <h2 style="color:#ffcc00; margin-bottom:15px;">✊ じゃんけん勝負 ✌️</h2>
-            <p style="font-size:12px; color:#aaa; margin-bottom:10px;">(ゲーム開始時の先攻・後攻決定)</p>
+            <p style="font-size:12px; color:#aaa; margin-bottom:10px;">(先攻・後攻決定)</p>
             <p id="janken-status-msg" style="margin-bottom:20px; font-size:14px;">じゃんけんの手を選んでください</p>
             <div id="janken-choice-buttons" style="display:flex; justify-content:center; gap:12px; margin-bottom:20px;">
                 <button id="btn-janken-rock" class="menu-btn sub" style="width:75px; height:60px; font-size:20px; touch-action:manipulation;">✊</button>
@@ -559,7 +557,6 @@ function createJankenOverlayDOM() {
     `;
     document.body.appendChild(overlay);
 
-    // スマホタッチ＆クリックの両方に対応して確実に反応させる
     ['touchstart', 'click'].forEach(evt => {
         document.getElementById('btn-janken-rock').addEventListener(evt, (e) => { e.preventDefault(); chooseJanken('rock'); }, { passive: false });
         document.getElementById('btn-janken-scissors').addEventListener(evt, (e) => { e.preventDefault(); chooseJanken('scissors'); }, { passive: false });
@@ -571,7 +568,7 @@ function createJankenOverlayDOM() {
 }
 
 function chooseJanken(choice) {
-    if (myJankenChoice !== '') return; // 二重選択防止
+    if (myJankenChoice !== '') return;
     myJankenChoice = choice;
     let names = { 'rock': '✊ グー', 'scissors': '✌️ チョキ', 'paper': '✋ パー' };
     
@@ -656,7 +653,7 @@ function executeOpponentAction(data) {
     }
 }
 
-// 💥 画面外「下」からお邪魔玉が飛んできて定着する演出
+// 💥 画面外「下」からお邪魔玉が飛んできて定着する演出（飛来中は勝敗判定を無効化）
 function launchOjamaProjectilesFromBottom(amount) {
     if (amount <= 0) return;
     let safeAmount = Math.min(amount, 10);
@@ -707,6 +704,7 @@ function applyOjamaToGrid(color) {
         }
     }
 
+    // お邪魔玉が完全に定着したあとなのでここで安全にゲームオーバー判定を行う
     checkGameOverCondition();
 }
 
@@ -762,6 +760,7 @@ function resetBulletPos() {
 }
 
 function checkClearCondition() {
+    // お邪魔玉の飛来中・落下中・フラッシュ中はクリア判定を行わない
     if (fallingBubbles.length > 0 || flashingBubbles.length > 0 || flyingOjamaList.length > 0) return;
 
     let hasBreakable = false;
@@ -819,6 +818,8 @@ function triggerSoloGameOver(msg) {
 
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
+    // 飛来中のお邪魔玉が存在する場合はゲームオーバー判定を完全に無効化する
+    if (flyingOjamaList.length > 0) return;
 
     let limitRow = ROWS - 1; 
 
@@ -1056,7 +1057,6 @@ function getTouchPos(e) {
 window.addEventListener('touchstart', (e) => {
     unlockAudio();
     if (gameState === 'playing') {
-        // じゃんけん中やメニュー画面表示中はゲームのスクロール等を防止
         let jankenEl = document.getElementById('janken-overlay');
         if (!jankenEl || jankenEl.style.display === 'none') {
             if (e.cancelable) e.preventDefault();
@@ -1073,7 +1073,6 @@ window.addEventListener('mousedown', (e) => {
 function handleInputStart(pos) {
     if (gameState === 'title') return;
 
-    // じゃんけん画面が開いているときはキャンバスの入力を無効化
     let jankenEl = document.getElementById('janken-overlay');
     if (jankenEl && jankenEl.style.display === 'flex') return;
 
