@@ -109,8 +109,8 @@ let turnRemainingTime = TURN_TIME_LIMIT;
 let turnTimerInterval = null;
 
 // --- 🎁 アイテムシステム管理変数 ---
-// インデックス 0:お邪魔×2, 1:スキップ, 2:貫通, 3:色変更
-let hasItem = [false, false, false, false]; 
+// インデックス 0:お邪魔×2, 1:お邪魔×3, 2:スキップ, 3:貫通, 4:色変更
+let hasItem = [false, false, false, false, false]; 
 let activeItem = null; 
 let isRouletteActive = false;
 let rouletteItemIndex = 0;
@@ -273,7 +273,7 @@ function initGridForStage(stage) {
     fallingBubbles = [];
     flashingBubbles = [];
     flyingOjamaList = [];
-    hasItem = [false, false, false, false];
+    hasItem = [false, false, false, false, false];
     activeItem = null;
     
     for (let r = 0; r < ROWS; r++) {
@@ -673,14 +673,14 @@ function executeOpponentAction(data) {
     let activeItemUsed = data.activeItemUsed;
     let actualOjama = data.ojamaAmount;
 
-    if (activeItemUsed === 2 && actualOjama > 0) {
+    if (activeItemUsed === 3 && actualOjama > 0) {
         actualOjama = 0; // 貫通攻撃を防御（相殺）
     }
 
     if (actualOjama > 0) {
         launchOjamaProjectilesFromBottom(actualOjama);
     } else {
-        if (activeItemUsed === 1) {
+        if (activeItemUsed === 2) {
             opponentTurnNoticeText = "💤 1回休み！ 相手の連続ターンです";
             opponentTurnNoticeTimer = 90;
             playSE(se.bombExplode);
@@ -705,10 +705,11 @@ function triggerItemRoulette() {
     playSE(se.rainbowSet);
 
     rouletteInterval = setInterval(() => {
-        rouletteItemIndex = (rouletteItemIndex + 1) % 4;
-        let names = ['① お邪魔×2', '② スキップ', '③ 貫通', '④ 色変更'];
+        rouletteItemIndex = (rouletteItemIndex + 1) % 5;
+        let names = ['① お邪魔×2', '② お邪魔×3', '③ スキップ', '④ 貫通', '⑤ 色変更'];
         let descList = [
             '【お邪魔×2】お邪魔玉の数が倍増！',
+            '【お邪魔×3】お邪魔玉の数が3倍増！',
             '【スキップ】相手に1回休みを付与！',
             '【貫通】壁・玉を突き抜け直進＆全消し！',
             '【色変更】指定した色の玉を別の色へ一斉変更！'
@@ -837,8 +838,7 @@ function handleColorChangeSelection(col) {
             }
         }
         playSE(se.rainbowLand);
-        hasItem[3] = false;
-        // activeItem は維持したまま（ターン終了させず発射できるようにする）
+        hasItem[4] = false;
         if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
             startTurnTimer(); // タイマー再開
         }
@@ -856,7 +856,7 @@ function clickItemButton(idx) {
     }
 
     activeItem = idx;
-    if (idx === 3) {
+    if (idx === 4) {
         openColorChangeStep1Overlay();
     }
 }
@@ -889,7 +889,6 @@ function countWallReflections(launchAngle, speed) {
             break;
         }
 
-        // 玉との衝突判定
         let hit = false;
         for (let r = 0; r < ROWS; r++) {
             let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
@@ -911,7 +910,7 @@ function countWallReflections(launchAngle, speed) {
 
 function launchOjamaProjectilesFromBottom(amount) {
     if (amount <= 0) return;
-    let safeAmount = Math.min(amount, 10);
+    let safeAmount = Math.min(amount, 15);
 
     attackNoticeText = `⚠️ お邪魔玉 +${safeAmount} 飛来中！`;
     attackNoticeTimer = 75; 
@@ -1324,17 +1323,19 @@ function getTouchPos(e) {
     return { x, y };
 }
 
-window.addEventListener('touchstart', (e) => {
+// スマホ特化（タッチイベント優先、passive:falseで確実な反応とスクロール防止）
+canvas.addEventListener('touchstart', (e) => {
     unlockAudio();
     let pos = getTouchPos(e);
 
     if (gameMode === 'battle' && battleType === 'お邪魔対戦' && battleTurnState === 'my_turn') {
-        if (pos.x >= 305 && pos.x <= 400 && pos.y >= 380 && pos.y <= 600) {
-            let relY = pos.y - 380;
-            let btnH = 50;
+        // アイテムボタンの判定領域（X: 305〜400, Y: 350〜595）
+        if (pos.x >= 305 && pos.x <= 400 && pos.y >= 350 && pos.y <= 595) {
+            let relY = pos.y - 350;
+            let btnH = 43;
             let gap = 5;
             let idx = Math.floor(relY / (btnH + gap));
-            if (idx >= 0 && idx < 4) {
+            if (idx >= 0 && idx < 5) {
                 if (e.cancelable) e.preventDefault();
                 clickItemButton(idx);
                 return;
@@ -1351,25 +1352,26 @@ window.addEventListener('touchstart', (e) => {
     handleInputStart(pos);
 }, { passive: false });
 
-window.addEventListener('mousedown', (e) => {
-    unlockAudio();
-    let pos = getTouchPos(e);
+canvas.addEventListener('touchmove', (e) => {
+    if (!isDragging) return;
+    let jankenEl = document.getElementById('janken-overlay');
+    if (jankenEl && jankenEl.style.display === 'flex') return;
+    if (e.cancelable) e.preventDefault();
+    handleDragMove(getTouchPos(e));
+}, { passive: false });
 
-    if (gameMode === 'battle' && battleType === 'お邪魔対戦' && battleTurnState === 'my_turn') {
-        if (pos.x >= 305 && pos.x <= 400 && pos.y >= 380 && pos.y <= 600) {
-            let relY = pos.y - 380;
-            let btnH = 50;
-            let gap = 5;
-            let idx = Math.floor(relY / (btnH + gap));
-            if (idx >= 0 && idx < 4) {
-                clickItemButton(idx);
-                return;
-            }
-        }
+canvas.addEventListener('touchend', (e) => {
+    if (isDragging) {
+        if (e.cancelable) e.preventDefault();
+        isDragging = false;
+        releaseBullet();
     }
+}, { passive: false });
 
-    handleInputStart(pos);
-});
+canvas.addEventListener('touchcancel', () => {
+    isDragging = false;
+    pullX = 0; pullY = 0;
+}, { passive: true });
 
 function handleInputStart(pos) {
     if (gameState === 'title') return;
@@ -1391,14 +1393,11 @@ function handleInputStart(pos) {
         }
 
         if (pos.x >= 305 && pos.x <= 395) {
-            if (pos.y >= 310 && pos.y <= 375) {
+            if (pos.y >= 260 && pos.y <= 335) {
                 if (bombUsesLeft > 0) {
                     bulletData = { color: SPECIAL_BOMB, isOjama: false, isMystery: false };
                     bombUsesLeft--;
                 }
-                return;
-            } else if (pos.y >= 540 && pos.y <= 595) {
-                openSettings();
                 return;
             }
         }
@@ -1408,16 +1407,6 @@ function handleInputStart(pos) {
         pullX = 0; pullY = 0;
     }
 }
-
-window.addEventListener('touchmove', (e) => {
-    if (!isDragging) return;
-    let jankenEl = document.getElementById('janken-overlay');
-    if (jankenEl && jankenEl.style.display === 'flex') return;
-    if (e.cancelable) e.preventDefault();
-    handleDragMove(getTouchPos(e));
-}, { passive: false });
-
-window.addEventListener('mousemove', (e) => { if (isDragging) handleDragMove(getTouchPos(e)); });
 
 function handleDragMove(pos) {
     let dx = pos.x - dragStartX;
@@ -1431,9 +1420,6 @@ function handleDragMove(pos) {
     pullX = dx; pullY = dy;
 }
 
-window.addEventListener('touchend', () => { if (isDragging) { isDragging = false; releaseBullet(); } });
-window.addEventListener('mouseup', () => { if (isDragging) { isDragging = false; releaseBullet(); } });
-
 function releaseBullet() {
     let pullDist = Math.hypot(pullX, pullY);
     if (pullDist < 12) { pullX = 0; pullY = 0; return; }
@@ -1443,8 +1429,7 @@ function releaseBullet() {
     let launchAngle = Math.atan2(-pullY, -pullX);
     
     if (launchAngle < -0.05 && launchAngle > -Math.PI + 0.05) {
-        // 貫通アイテム（index 2）選択時の壁反射制限チェック
-        if (activeItem === 2) {
+        if (activeItem === 3) {
             let reflections = countWallReflections(launchAngle, speed);
             if (reflections > 2) {
                 attackNoticeText = "⚠️ 左右の壁への反射が多すぎます (最大2回まで)";
@@ -1632,14 +1617,12 @@ function update() {
                 stepVX *= -1;
             }
 
-            // 貫通アイテム有効時の処理（上部に接触するまで突き進む）
-            if (activeItem === 2) {
+            if (activeItem === 3) {
                 if (bulletY - RADIUS <= TOP_MARGIN) {
                     bulletY = TOP_MARGIN + RADIUS;
                     snapBullet();
                     return;
                 }
-                // 接触した玉をすべて消す
                 for (let r = 0; r < ROWS; r++) {
                     let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
                     for (let c = 0; c < colsInRow; c++) {
@@ -1681,7 +1664,7 @@ function update() {
 }
 
 function snapBullet() {
-    let wasPiercing = (activeItem === 2);
+    let wasPiercing = (activeItem === 3);
     isMoving = false;
     let cell = findCellForPosition(bulletX, bulletY);
     
@@ -1690,7 +1673,6 @@ function snapBullet() {
     if (wasPiercing) {
         playSE(se.bombExplode);
         let floatCount = removeFloating();
-        // 貫通時は通った分のお邪魔を計算（消えた数）
         generatedOjama = floatCount + 5;
     } else if (cell.r >= 0 && cell.r < ROWS) {
         let colsInRow = (cell.r % 2 === 0) ? COLS : COLS - 1;
@@ -1778,6 +1760,8 @@ function snapBullet() {
 
     if (usedItem === 0) {
         generatedOjama *= 2;
+    } else if (usedItem === 1) {
+        generatedOjama *= 3;
     }
 
     if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
@@ -1785,7 +1769,7 @@ function snapBullet() {
             conn.send({ type: 'sync_turn_action', ojamaAmount: generatedOjama, didClear: false, activeItemUsed: usedItem });
         }
 
-        if (usedItem === 1) {
+        if (usedItem === 2) {
             battleTurnState = 'my_turn';
             startTurnTimer();
         } else {
@@ -1854,30 +1838,22 @@ function draw() {
 
     let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
     ctx.fillStyle = btnBg;
-    ctx.beginPath(); ctx.roundRect(312, 260, 80, 65, 10); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(312, 260, 80, 75, 10); ctx.fill();
     ctx.strokeStyle = bombUsesLeft > 0 ? "#fff" : "#555"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
 
     ctx.fillStyle = bombUsesLeft > 0 ? "#fff" : "#777";
     ctx.font = "bold 12px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("💣ボム", 352, 288);
-    ctx.fillText(`(${bombUsesLeft})`, 352, 308);
-
-    ctx.fillStyle = "#333";
-    ctx.beginPath(); ctx.roundRect(312, 540, 80, 50, 10); ctx.fill();
-    ctx.strokeStyle = "#888"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
-
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 12px sans-serif";
-    ctx.fillText("⚙️ 設定", 352, 570);
+    ctx.fillText("💣ボム", 352, 295);
+    ctx.fillText(`(${bombUsesLeft})`, 352, 318);
 
     if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
-        let itemNames = ['①お邪魔×2', '②スキップ', '③貫通', '④色変更'];
-        let itemStartY = 380;
-        let itemBtnH = 35;
+        let itemNames = ['①お邪魔×2', '②お邪魔×3', '③スキップ', '④貫通', '⑤色変更'];
+        let itemStartY = 350;
+        let itemBtnH = 43;
         let itemGap = 5;
 
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < 5; i++) {
             let by = itemStartY + i * (itemBtnH + itemGap);
             let isOwned = hasItem[i];
             let isActive = (activeItem === i);
@@ -1889,7 +1865,7 @@ function draw() {
 
             ctx.fillStyle = isOwned ? "#ffffff" : "#666";
             ctx.font = "bold 11px sans-serif";
-            ctx.fillText(itemNames[i], 352, by + 22);
+            ctx.fillText(itemNames[i], 352, by + 26);
         }
     }
     ctx.textAlign = "left";
@@ -2019,7 +1995,7 @@ function drawTitleBackground() {
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    ctx.fillText("Ver 1.12", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.13", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
 
