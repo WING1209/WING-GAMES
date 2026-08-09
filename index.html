@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>○o WING GAME玉 o○</title>
     <!-- PeerJS (通信用ライブラリ) -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
@@ -12,31 +12,33 @@
             -webkit-touch-callout: none;
             -webkit-user-select: none;
             user-select: none;
+            -webkit-tap-highlight-color: transparent;
         }
-        body {
+        html, body {
             margin: 0;
             padding: 0;
             background: #111;
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
+            width: 100vw;
             height: 100vh;
             height: 100dvh;
             overflow: hidden;
+            position: fixed; /* スマホでの意図しないスクロールやバウンスを防止 */
             touch-action: none;
         }
         #game-container {
             position: relative;
             width: 100vw;
+            height: 100vh;
             height: 100dvh;
             max-width: 480px;
+            margin: 0 auto;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
+            overflow: hidden;
         }
         canvas {
             background: #1a1a1a;
@@ -61,6 +63,7 @@
             padding: 24px;
             z-index: 100;
             text-align: center;
+            touch-action: manipulation;
         }
         .overlay-screen h2 {
             color: #ffcc00;
@@ -113,6 +116,7 @@
             width: 85%;
             max-width: 280px;
             cursor: pointer;
+            -webkit-appearance: none;
         }
         .menu-btn:active {
             transform: scale(0.96);
@@ -132,6 +136,7 @@
             border-radius: 10px;
             width: 220px;
             margin: 15px 0;
+            -webkit-appearance: none;
         }
         #status-message {
             color: #ff4d4d;
@@ -174,11 +179,12 @@
     <div id="game-container">
         <canvas id="gameCanvas"></canvas>
 
-       <div id="screen-title" class="overlay-screen" style="display:flex; cursor:pointer;" onclick="goToHowToPlay()">
-    <div class="title-logo">○o WING GAME玉 o○</div>
-    <div class="blink-text">- START (画面をタップ) -</div>
-    <div class="version-text">Ver1.08</div>
-</div>
+        <div id="screen-title" class="overlay-screen" style="display:flex; cursor:pointer;" onclick="goToHowToPlay()">
+            <div class="title-logo">○o WING GAME玉 o○</div>
+            <div class="blink-text">- START (画面をタップ) -</div>
+            <div class="version-text">Ver1.09</div>
+        </div>
+
         <div id="screen-how-to-play" class="overlay-screen">
             <h2>🎮 遊び方</h2>
             <div class="rules-box">
@@ -292,7 +298,6 @@
         <div id="screen-battle-result" class="overlay-screen">
             <h2 id="battle-result-title" style="font-size:36px; margin-bottom:10px;"></h2>
             <p id="battle-result-sub" style="font-size:18px; color:#fff; margin-bottom:30px;"></p>
-            
             <div id="battle-loser-controls" style="display:none; width:100%; flex-direction:column; align-items:center;">
                 <button class="menu-btn sub" onclick="requestRematch()">もう一度対戦する 🔄</button>
                 <button class="menu-btn gray" onclick="returnToTitle()">タイトルへ戻る</button>
