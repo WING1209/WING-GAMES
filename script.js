@@ -310,6 +310,7 @@ function setupConnectionListeners() {
 
     conn.on('data', (data) => {
         if (battleRole === 'guest') {
+            // --- ゲスト側がホストから受け取る通信 ---
             if (data.type === 'show_rules') {
                 targetWins = data.targetWins;
                 battleType = data.battleType;
@@ -328,14 +329,14 @@ function setupConnectionListeners() {
                 startNextRound();
             }
         } else {
-            // ホスト側がゲストから受け取る通信
+            // --- ホスト側がゲストから受け取る通信 ---
             if (data.type === 'guest_request_attack' && battleType === 'お邪魔対戦') {
                 launchOjamaProjectiles(data.amount);
                 if (conn && conn.open) conn.send({ type: 'sync_attack', amount: data.amount });
             } else if (data.type === 'guest_game_over') {
-                handleHostRoundDecide('YOU');
+                handleHostRoundDecide('OPPONENT'); // ゲストの自滅（溢れ）はホストの勝ち
             } else if (data.type === 'guest_request_round_win' && battleType === 'タイムアタック') {
-                handleHostRoundDecide('OPPONENT');
+                handleHostRoundDecide('OPPONENT'); // ゲストが先にタイムアタッククリア
             } else if (data.type === 'rematch') {
                 myWins = 0;
                 opponentWins = 0;
@@ -432,6 +433,7 @@ function startNextRound() {
     initGridForStage(1);
     spawnBullet();
     gameState = 'playing';
+    playRandomBGM();
     showScreen('');
 }
 
@@ -462,15 +464,15 @@ function launchOjamaProjectiles(amount) {
     for (let i = 0; i < safeAmount; i++) {
         setTimeout(() => {
             let startX = Math.random() * 260 + 50;
-            let startY = -40; // 画面上方からスタート
+            let startY = -40;
             let color = getRandomGridColor();
             
             flyingOjamaList.push({
                 x: startX,
                 y: startY,
-                targetY: Math.random() * 100 + 40, // 落ちてくる位置
+                targetY: Math.random() * 100 + 40,
                 color: color,
-                vy: 6 + Math.random() * 4 // 下方向へ落下
+                vy: 6 + Math.random() * 4
             });
         }, i * 120);
     }
@@ -572,9 +574,9 @@ function checkClearCondition() {
         if (gameMode === 'battle') {
             if (battleType === 'タイムアタック') {
                 if (battleRole === 'host') {
-                    handleHostRoundDecide('YOU');
+                    handleHostRoundDecide('YOU'); // ホストがクリア
                 } else {
-                    if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
+                    if (conn && conn.open) conn.send({ type: 'guest_request_round_win' }); // ゲストがクリアしたことをホストに伝える
                 }
             }
         } else {
@@ -616,10 +618,10 @@ function checkGameOverCondition() {
                     gameState = 'gameover_menu';
                     
                     if (battleRole === 'host') {
-                        handleHostRoundDecide('OPPONENT');
+                        handleHostRoundDecide('OPPONENT'); // ホストの自滅はゲストの勝ち
                     } else {
                         if (conn && conn.open) {
-                            conn.send({ type: 'guest_game_over' });
+                            conn.send({ type: 'guest_game_over' }); // ゲストの自滅をホストに伝える
                         }
                         triggerSoloGameOver("ラウンド敗北... (玉が溢れました)");
                     }
@@ -657,6 +659,17 @@ function handleTimeOutGameOver() {
     triggerSoloGameOver(`タイムアップ！ (ステージ ${currentStage})`);
 }
 
+function requestRematch() {
+    if (battleRole === 'host') {
+        myWins = 0;
+        opponentWins = 0;
+        if (conn && conn.open) conn.send({ type: 'rematch' });
+        startNextRound();
+    } else {
+        if (conn && conn.open) conn.send({ type: 'rematch' });
+    }
+}
+
 function checkBattleSetEnd(roundWinner) {
     if (myWins >= targetWins || opponentWins >= targetWins) {
         battleWinner = (battleRole === 'host' && myWins >= targetWins) || (battleRole === 'guest' && roundWinner === 'YOU') ? 'YOU' : 'OPPONENT';
@@ -678,14 +691,14 @@ function checkBattleSetEnd(roundWinner) {
             titleEl.style.color = "#ffcc00";
             subEl.innerText = `勝利達成！ (${myWins}勝 - ${opponentWins}勝)`;
             initWinParticles(); 
-            if (loserControls) loserControls.style.display = 'none';
-            if (winnerWait) winnerWait.style.display = 'block';
+            if (loserControls) loserControls.style.display = 'block'; // 再戦ボタンを表示可能に
+            if (winnerWait) winnerWait.style.display = 'none';
         } else {
             titleEl.innerText = "💀 敗北... LOSER";
             titleEl.style.color = "#ff4d4d";
             subEl.innerText = `対戦に敗北しました (${myWins}勝 - ${opponentWins}勝)`;
             initLoseParticles(); 
-            if (loserControls) loserControls.style.display = 'flex';
+            if (loserControls) loserControls.style.display = 'block'; // 敗北側も再戦ボタンを押せるようにする
             if (winnerWait) winnerWait.style.display = 'none';
         }
 
@@ -1012,7 +1025,6 @@ function update() {
     if (attackNoticeTimer > 0) attackNoticeTimer--;
     if (shakeTimer > 0) shakeTimer--;
 
-    // 💥 飛来中のお邪魔玉の更新（上から下に落下）
     for (let i = flyingOjamaList.length - 1; i >= 0; i--) {
         let oj = flyingOjamaList[i];
         oj.y += oj.vy;
