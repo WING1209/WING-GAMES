@@ -241,23 +241,11 @@ function forceTimeoutTurnEnd() {
     switchTurnToOpponent();
 }
 
-function isMysteryAllowedInGrid() {
-    for (let r = 0; r < ROWS; r++) {
-        let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
-        for (let c = 0; c < colsInRow; c++) {
-            if (grid[r][c] !== null && grid[r][c].isMystery) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 function getRandomGridCell() {
     let color = BASE_COLORS[Math.floor(Math.random() * BASE_COLORS.length)];
     let isMystery = false;
     if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
-        if (Math.random() < 0.11 && isMysteryAllowedInGrid()) {
+        if (Math.random() < 0.11) {
             isMystery = true;
         }
     }
@@ -267,7 +255,7 @@ function getRandomGridCell() {
 function getRandomShooterBubble() {
     let isMystery = false;
     if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
-        if (Math.random() < 0.11 && isMysteryAllowedInGrid()) {
+        if (Math.random() < 0.11) {
             isMystery = true;
         }
     }
