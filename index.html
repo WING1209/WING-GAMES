@@ -44,7 +44,6 @@
             display: block;
             width: 100%;
             height: 100%;
-            object-fit: contain;
             z-index: 1;
             touch-action: none;
         }
@@ -173,12 +172,12 @@
 <body>
 
     <div id="game-container">
-        <canvas id="gameCanvas" width="400" height="750"></canvas>
+        <canvas id="gameCanvas"></canvas>
 
         <div id="screen-title" class="overlay-screen" style="display:flex; cursor:pointer;" onclick="goToHowToPlay()">
             <div class="title-logo">○o WING GAME玉 o○</div>
             <div class="blink-text">- START (画面をタップ) -</div>
-            <div class="version-text">Ver1.02</div>
+            <div class="version-text">Ver1.04</div>
         </div>
 
         <div id="screen-how-to-play" class="overlay-screen">
