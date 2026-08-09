@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>○o WING GAME玉 o○</title>
     <!-- PeerJS (通信用ライブラリ) -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
@@ -12,33 +12,31 @@
             -webkit-touch-callout: none;
             -webkit-user-select: none;
             user-select: none;
-            -webkit-tap-highlight-color: transparent;
         }
-        html, body {
+        body {
             margin: 0;
             padding: 0;
             background: #111;
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            width: 100vw;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
             height: 100vh;
             height: 100dvh;
             overflow: hidden;
-            position: fixed;
             touch-action: none;
         }
         #game-container {
             position: relative;
             width: 100vw;
-            height: 100vh;
             height: 100dvh;
             max-width: 480px;
-            margin: 0 auto;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            overflow: hidden;
         }
         canvas {
             background: #1a1a1a;
@@ -46,6 +44,7 @@
             display: block;
             width: 100%;
             height: 100%;
+            object-fit: contain;
             z-index: 1;
             touch-action: none;
         }
@@ -115,8 +114,6 @@
             width: 85%;
             max-width: 280px;
             cursor: pointer;
-            -webkit-appearance: none;
-            touch-action: manipulation;
         }
         .menu-btn:active {
             transform: scale(0.96);
@@ -136,7 +133,6 @@
             border-radius: 10px;
             width: 220px;
             margin: 15px 0;
-            -webkit-appearance: none;
         }
         #status-message {
             color: #ff4d4d;
@@ -177,16 +173,14 @@
 <body>
 
     <div id="game-container">
-        <canvas id="gameCanvas"></canvas>
+        <canvas id="gameCanvas" width="400" height="750"></canvas>
 
-        <!-- タイトル画面 -->
-        <div id="screen-title" class="overlay-screen" style="display:flex; cursor:pointer;">
+        <div id="screen-title" class="overlay-screen" style="display:flex; cursor:pointer;" onclick="goToHowToPlay()">
             <div class="title-logo">○o WING GAME玉 o○</div>
             <div class="blink-text">- START (画面をタップ) -</div>
-            <div class="version-text">Ver1.016</div>
+            <div class="version-text">Ver1.02</div>
         </div>
 
-        <!-- 遊び方画面 -->
         <div id="screen-how-to-play" class="overlay-screen">
             <h2>🎮 遊び方</h2>
             <div class="rules-box">
@@ -197,7 +191,7 @@
                 ・<b>💣 ボム玉</b>: 右側のボムボタンでセット！着弾点の周囲をまとめて爆破。<br>
                 ・<b>★ レインボー玉</b>: 当たった玉と同じ色の玉を全消し！
             </div>
-            <button class="menu-btn" id="btn-to-mode">次へ進む ➔</button>
+            <button class="menu-btn" onclick="showScreen('screen-mode')">次へ進む ➔</button>
         </div>
 
         <div id="screen-mode" class="overlay-screen">
@@ -320,47 +314,5 @@
 
     <!-- JavaScriptファイルの読み込み -->
     <script src="script.js"></script>
-    <script>
-        // スマホでの安全な画面切り替え用セーフティスクリプト
-        window.showScreen = window.showScreen || function(screenId) {
-            const screens = document.querySelectorAll('.overlay-screen');
-            screens.forEach(s => s.style.display = 'none');
-            const target = document.getElementById(screenId);
-            if (target) target.style.display = 'flex';
-        };
-
-        // 1. タイトル画面タップのフック
-        const titleScreen = document.getElementById('screen-title');
-        if (titleScreen) {
-            const handleTitleTransition = function(e) {
-                if (e) e.preventDefault();
-                if (typeof goToHowToPlay === 'function') {
-                    goToHowToPlay();
-                } else {
-                    titleScreen.style.display = 'none';
-                    const howToPlay = document.getElementById('screen-how-to-play');
-                    if (howToPlay) howToPlay.style.display = 'flex';
-                }
-            };
-            titleScreen.addEventListener('touchstart', handleTitleTransition, { passive: false });
-            titleScreen.addEventListener('click', handleTitleTransition);
-        }
-
-        // 2. 遊び方画面の「次へ進む」ボタンのフック
-        const toModeBtn = document.getElementById('btn-to-mode');
-        if (toModeBtn) {
-            const handleModeTransition = function(e) {
-                if (e) e.preventDefault();
-                if (typeof showScreen === 'function') {
-                    showScreen('screen-mode');
-                } else {
-                    document.getElementById('screen-how-to-play').style.display = 'none';
-                    document.getElementById('screen-mode').style.display = 'flex';
-                }
-            };
-            toModeBtn.addEventListener('touchstart', handleModeTransition, { passive: false });
-            toModeBtn.addEventListener('click', handleModeTransition);
-        }
-    </script>
 </body>
 </html>
