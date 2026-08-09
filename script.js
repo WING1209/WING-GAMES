@@ -66,8 +66,8 @@ function stopBGM() {
 }
 
 // --- 🎮 ゲーム基本パラメータ ---
-const ROWS = 15; // 縦長フィールドに拡張 (旧12 -> 15)
-const COLS = 8;  // 最大列数 (偶数行: 8列, 奇数行: 7列)
+const ROWS = 15; 
+const COLS = 8;  
 const RADIUS = 19;
 const DIAMETER = RADIUS * 2;
 const ROW_HEIGHT = RADIUS * Math.sqrt(3);
@@ -79,7 +79,7 @@ const COLOR_NAMES = {
 };
 let customImages = {};
 const UNBREAKABLE_COLOR = '#fff';
-const TOP_MARGIN = 15; // 画面上部の余白をスリム化
+const TOP_MARGIN = 15; 
 
 let grid = [];
 let score = 0;
@@ -96,7 +96,7 @@ let battleRole = ''; // 'host' (1P) | 'guest' (2P)
 let roomCode = '';
 let gameState = 'title';
 
-let shooterX = 200; // フィールド中央(幅400の半分)
+let shooterX = 200; 
 let shooterY = canvas.height - 70;
 let bulletX = shooterX;
 let bulletY = shooterY;
@@ -136,7 +136,7 @@ let shakeTimer = 0;
 let isProcessingAttack = false;
 
 // タイマー関連（ソロモード）
-const STAGE_TIME_LIMIT = 180; // 縦長化に伴い少し延長
+const STAGE_TIME_LIMIT = 180; 
 let remainingTime = STAGE_TIME_LIMIT;
 let timerInterval = null;
 let totalClearTime = 0;
@@ -382,9 +382,9 @@ function displayBattleRulesDesc() {
                `・勝利条件: ${targetWins}勝先取`;
     } else {
         desc = `<b>【⚔️ お邪魔対戦】</b><br>` +
-               `玉を消すと、消した個数分のお邪魔玉が相手の画面下から飛んできて付着！<br>` +
-               `（※お邪魔玉は同色でも3個以上で消えません）<br><br>` +
-               `・勝利条件: 相手を全滅させるか先に全消し (${targetWins}勝先取)`;
+               `玉を消すと、消した個数分のお邪魔玉が相手の画面下に飛んできます！<br>` +
+               `相手のフィールドを玉で溢れさせ（ゲームオーバー状態に）させれば勝利！<br><br>` +
+               `・勝利条件: ${targetWins}勝先取`;
     }
     document.getElementById('rules-text-content').innerHTML = desc;
     showScreen('screen-battle-rules-desc');
@@ -487,7 +487,6 @@ function launchOjamaProjectiles(amount) {
 }
 
 function applyOjamaToGrid(color) {
-    // 下部（ROWS-1）から上方向に向かって、空いている最も近いセルを探して定着させる
     let placed = false;
     for (let r = ROWS - 1; r >= 0; r--) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
@@ -501,7 +500,6 @@ function applyOjamaToGrid(color) {
         if (placed) break;
     }
 
-    // もしフィールドが完全に埋まってしまっている場合は一番上に無理やり押し込む
     if (!placed) {
         for (let c = 0; c < COLS; c++) {
             if (grid[0][c] === null) {
@@ -582,10 +580,13 @@ function checkClearCondition() {
     if (!hasBreakable) {
         playSE(se.stageClear);
         if (gameMode === 'battle') {
-            if (battleRole === 'host') {
-                handleHostRoundDecide('YOU');
-            } else {
-                if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
+            // お邪魔対戦のときは「全消しによる勝利判定」を行わないようにする
+            if (battleType === 'タイムアタック') {
+                if (battleRole === 'host') {
+                    handleHostRoundDecide('YOU');
+                } else {
+                    if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
+                }
             }
         } else {
             if (currentStage < maxStages) {
@@ -624,6 +625,7 @@ function checkGameOverCondition() {
                 if (gameMode === 'battle') {
                     stopBGM();
                     if (battleRole === 'host') {
+                        // 対戦モードで溢れた場合、自分（ホスト視点）が負け、相手が勝ち
                         handleHostRoundDecide('OPPONENT');
                     } else {
                         if (conn && conn.open) conn.send({ type: 'guest_request_round_win' });
@@ -650,7 +652,6 @@ function handleHostRoundDecide(roundWinnerRole) {
     if (myWins >= targetWins) setWinner = 'YOU';
     else if (opponentWins >= targetWins) setWinner = 'OPPONENT';
 
-    // 修正：ゲスト側へ送る勝敗データと判定を正しくマッピング
     if (conn && conn.open) {
         conn.send({
             type: 'sync_round_end',
