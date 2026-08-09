@@ -494,15 +494,9 @@ function startNextRound() {
     gameState = 'playing';
     playRandomBGM();
     if (battleType === 'お邪魔対戦') {
-        // 次のラウンドへ進む際もじゃんけんは再実施しない（直前の勝者・あるいは交互等の仕様にする場合はここを調整。今回は仕様通り初回のみのため、前回の順序を維持するか、ここで再じゃんけんするか選べますが、一般的にセット中の初回のみの場合はそのまま開始、あるいは次ラウンドの先攻交代も可能です。今回はシンプルにラウンド開始時は即プレイ開始します）
         showScreen('');
-        if (battleType === 'お邪魔対戦') {
-            // 毎回ラウンドごとにじゃんけんしたい場合は startJankenPhase() に変更できますが、
-            // 「ゲーム開始直前に1回だけ」の仕様に合わせて、次ラウンドは直前の敗者が先攻になるなどの仕様にするか、
-            // またはシンプルに毎ラウンドじゃんけんを行わないようダイレクトに開始します。
-            currentTurnPlayer = (currentTurnPlayer === 'host') ? 'guest' : 'host'; // 交互に先攻を入れ替え
-            startBattleRoundLoop();
-        }
+        currentTurnPlayer = (currentTurnPlayer === 'host') ? 'guest' : 'host';
+        startBattleRoundLoop();
     } else {
         showScreen('');
     }
@@ -552,25 +546,39 @@ function createJankenOverlayDOM() {
             <p style="font-size:12px; color:#aaa; margin-bottom:10px;">(ゲーム開始時の先攻・後攻決定)</p>
             <p id="janken-status-msg" style="margin-bottom:20px; font-size:14px;">じゃんけんの手を選んでください</p>
             <div id="janken-choice-buttons" style="display:flex; justify-content:center; gap:12px; margin-bottom:20px;">
-                <button class="menu-btn sub" onclick="chooseJanken('rock')" style="width:75px; font-size:20px;">✊</button>
-                <button class="menu-btn sub" onclick="chooseJanken('scissors')" style="width:75px; font-size:20px;">✌️</button>
-                <button class="menu-btn sub" onclick="chooseJanken('paper')" style="width:75px; font-size:20px;">✋</button>
+                <button id="btn-janken-rock" class="menu-btn sub" style="width:75px; height:60px; font-size:20px; touch-action:manipulation;">✊</button>
+                <button id="btn-janken-scissors" class="menu-btn sub" style="width:75px; height:60px; font-size:20px; touch-action:manipulation;">✌️</button>
+                <button id="btn-janken-paper" class="menu-btn sub" style="width:75px; height:60px; font-size:20px; touch-action:manipulation;">✋</button>
             </div>
             <div id="janken-role-select" style="display:none; flex-direction:column; gap:10px;">
                 <p id="janken-winner-desc" style="color:#4dff4d; font-weight:bold; font-size:15px;"></p>
-                <button class="menu-btn" onclick="selectFirstOrSecond('first')">先行で始める</button>
-                <button class="menu-btn sub" onclick="selectFirstOrSecond('second')">後攻で始める</button>
+                <button id="btn-role-first" class="menu-btn" style="touch-action:manipulation;">先行で始める</button>
+                <button id="btn-role-second" class="menu-btn sub" style="touch-action:manipulation;">後攻で始める</button>
             </div>
         </div>
     `;
     document.body.appendChild(overlay);
+
+    // スマホタッチ＆クリックの両方に対応して確実に反応させる
+    ['touchstart', 'click'].forEach(evt => {
+        document.getElementById('btn-janken-rock').addEventListener(evt, (e) => { e.preventDefault(); chooseJanken('rock'); }, { passive: false });
+        document.getElementById('btn-janken-scissors').addEventListener(evt, (e) => { e.preventDefault(); chooseJanken('scissors'); }, { passive: false });
+        document.getElementById('btn-janken-paper').addEventListener(evt, (e) => { e.preventDefault(); chooseJanken('paper'); }, { passive: false });
+        
+        document.getElementById('btn-role-first').addEventListener(evt, (e) => { e.preventDefault(); selectFirstOrSecond('first'); }, { passive: false });
+        document.getElementById('btn-role-second').addEventListener(evt, (e) => { e.preventDefault(); selectFirstOrSecond('second'); }, { passive: false });
+    });
 }
 
 function chooseJanken(choice) {
+    if (myJankenChoice !== '') return; // 二重選択防止
     myJankenChoice = choice;
     let names = { 'rock': '✊ グー', 'scissors': '✌️ チョキ', 'paper': '✋ パー' };
-    document.getElementById('janken-status-msg').innerText = `あなた: ${names[choice]} を選択しました。\n相手の選択を待っています...`;
-    document.getElementById('janken-choice-buttons').style.display = 'none';
+    
+    let statusMsgEl = document.getElementById('janken-status-msg');
+    let buttonsEl = document.getElementById('janken-choice-buttons');
+    if (statusMsgEl) statusMsgEl.innerText = `あなた: ${names[choice]} を選択しました。\n相手の選択を待っています...`;
+    if (buttonsEl) buttonsEl.style.display = 'none';
 
     if (conn && conn.open) {
         conn.send({ type: 'sync_janken_result', choice: choice });
@@ -579,14 +587,18 @@ function chooseJanken(choice) {
 }
 
 function checkJankenFinish() {
+    let statusMsgEl = document.getElementById('janken-status-msg');
+    let roleSelectEl = document.getElementById('janken-role-select');
+    let buttonsEl = document.getElementById('janken-choice-buttons');
+
     if (myJankenChoice !== '' && opponentJankenChoice !== '') {
         if (myJankenChoice === opponentJankenChoice) {
-            document.getElementById('janken-status-msg').innerText = "あいこです！もう一度選んでください";
+            if (statusMsgEl) statusMsgEl.innerText = "あいこです！もう一度選んでください";
             myJankenChoice = '';
             opponentJankenChoice = '';
             setTimeout(() => {
-                document.getElementById('janken-choice-buttons').style.display = 'flex';
-            }, 1000);
+                if (buttonsEl) buttonsEl.style.display = 'flex';
+            }, 800);
             return;
         }
 
@@ -597,10 +609,10 @@ function checkJankenFinish() {
         );
 
         if (iWon) {
-            document.getElementById('janken-status-msg').innerText = "あなたの勝ち！ 先行か後攻を選んでください";
-            document.getElementById('janken-role-select').style.display = 'flex';
+            if (statusMsgEl) statusMsgEl.innerText = "あなたの勝ち！ 先行か後攻を選んでください";
+            if (roleSelectEl) roleSelectEl.style.display = 'flex';
         } else {
-            document.getElementById('janken-status-msg').innerText = "あなたの負け... 相手の選択を待っています";
+            if (statusMsgEl) statusMsgEl.innerText = "あなたの負け... 相手の選択を待っています";
         }
     }
 }
@@ -1043,7 +1055,13 @@ function getTouchPos(e) {
 
 window.addEventListener('touchstart', (e) => {
     unlockAudio();
-    if (gameState === 'playing') e.preventDefault();
+    if (gameState === 'playing') {
+        // じゃんけん中やメニュー画面表示中はゲームのスクロール等を防止
+        let jankenEl = document.getElementById('janken-overlay');
+        if (!jankenEl || jankenEl.style.display === 'none') {
+            if (e.cancelable) e.preventDefault();
+        }
+    }
     handleInputStart(getTouchPos(e));
 }, { passive: false });
 
@@ -1054,6 +1072,10 @@ window.addEventListener('mousedown', (e) => {
 
 function handleInputStart(pos) {
     if (gameState === 'title') return;
+
+    // じゃんけん画面が開いているときはキャンバスの入力を無効化
+    let jankenEl = document.getElementById('janken-overlay');
+    if (jankenEl && jankenEl.style.display === 'flex') return;
 
     if (gameState === 'gameclear') {
         promptNameInput();
@@ -1083,6 +1105,8 @@ function handleInputStart(pos) {
 
 window.addEventListener('touchmove', (e) => {
     if (!isDragging) return;
+    let jankenEl = document.getElementById('janken-overlay');
+    if (jankenEl && jankenEl.style.display === 'flex') return;
     if (e.cancelable) e.preventDefault();
     handleDragMove(getTouchPos(e));
 }, { passive: false });
@@ -1561,7 +1585,7 @@ function drawTitleBackground() {
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    ctx.fillText("Ver 1.06", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.07", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
 
@@ -1648,12 +1672,12 @@ function openSettings() {
 
         let uploadBtn = document.createElement('button');
         uploadBtn.className = 'menu-btn sub';
-        uploadBtn.style.cssText = "padding:8px 12px; font-size:12px; width:auto; margin:0;";
+        uploadBtn.style.cssText = "padding:8px 12px; font-size:12px; width:auto; margin:0; touch-action:manipulation;";
         uploadBtn.innerText = '📷 変更';
 
         let resetBtn = document.createElement('button');
         resetBtn.className = 'menu-btn danger';
-        resetBtn.style.cssText = "padding:8px 10px; font-size:12px; width:auto; margin:0;";
+        resetBtn.style.cssText = "padding:8px 10px; font-size:12px; width:auto; margin:0; touch-action:manipulation;";
         resetBtn.innerText = '🔄';
         resetBtn.onclick = () => { delete customImages[col]; openSettings(); };
         
