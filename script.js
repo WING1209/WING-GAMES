@@ -331,10 +331,8 @@ function setupConnectionListeners() {
             // ホスト側がゲストから受け取る通信
             if (data.type === 'guest_request_attack' && battleType === 'お邪魔対戦') {
                 launchOjamaProjectiles(data.amount);
-                // ホストからも相手にお邪魔玉を送り返す同期（必要なら）
                 if (conn && conn.open) conn.send({ type: 'sync_attack', amount: data.amount });
             } else if (data.type === 'guest_game_over') {
-                // ゲストがゲームオーバーになった＝ホストのラウンド勝ち
                 handleHostRoundDecide('YOU');
             } else if (data.type === 'guest_request_round_win' && battleType === 'タイムアタック') {
                 handleHostRoundDecide('OPPONENT');
@@ -386,8 +384,8 @@ function displayBattleRulesDesc() {
                `・勝利条件: ${targetWins}勝先取`;
     } else {
         desc = `<b>【⚔️ お邪魔対戦】</b><br>` +
-               `玉を消すと、消した個数分のお邪魔玉が相手の画面下に飛んできます！<br>` +
-               `相手のフィールドを玉で溢れさせ（ゲームオーバー状態に）させれば勝利！<br><br>` +
+               `玉を消すと、消した個数分のお邪魔玉が相手の画面上から降ってきます！<br>` +
+               `相手のフィールドを玉で溢れさせれば勝利！<br><br>` +
                `・勝利条件: ${targetWins}勝先取`;
     }
     document.getElementById('rules-text-content').innerHTML = desc;
@@ -451,12 +449,12 @@ function requestAttackToOpponent(amount) {
     }
 }
 
-// 💥 画面下（画面外）からお邪魔玉が飛んでくる演出と着弾処理
+// 💥 画面外の上部からお邪魔玉が降ってくる演出と着弾処理
 function launchOjamaProjectiles(amount) {
     if (amount <= 0) return;
     let safeAmount = Math.min(amount, 10);
 
-    attackNoticeText = `⚠️ お邪魔玉 +${safeAmount} 飛来中！`;
+    attackNoticeText = `⚠️ お邪魔玉 +${safeAmount} 落下中！`;
     attackNoticeTimer = 75; 
     shakeTimer = Math.min(shakeTimer + 10, 30); 
     playSE(se.bombExplode);
@@ -464,15 +462,15 @@ function launchOjamaProjectiles(amount) {
     for (let i = 0; i < safeAmount; i++) {
         setTimeout(() => {
             let startX = Math.random() * 260 + 50;
-            let startY = canvas.height + 30;
+            let startY = -40; // 画面上方からスタート
             let color = getRandomGridColor();
             
             flyingOjamaList.push({
                 x: startX,
                 y: startY,
-                targetY: canvas.height * 0.45,
+                targetY: Math.random() * 100 + 40, // 落ちてくる位置
                 color: color,
-                vy: -12 - Math.random() * 6
+                vy: 6 + Math.random() * 4 // 下方向へ落下
             });
         }, i * 120);
     }
@@ -572,7 +570,6 @@ function checkClearCondition() {
     if (!hasBreakable) {
         playSE(se.stageClear);
         if (gameMode === 'battle') {
-            // お邪魔対戦のときは全消し勝利を無効化。タイムアタックのみ全消し＝勝ち
             if (battleType === 'タイムアタック') {
                 if (battleRole === 'host') {
                     handleHostRoundDecide('YOU');
@@ -616,17 +613,14 @@ function checkGameOverCondition() {
             if (grid[r][cc] !== null) {
                 if (gameMode === 'battle') {
                     stopBGM();
-                    gameState = 'gameover_menu'; // 二重判定を防ぐため先にステータス変更
+                    gameState = 'gameover_menu';
                     
                     if (battleRole === 'host') {
-                        // ホスト自身が溢れた → 相手（ゲスト）のラウンド勝ち
                         handleHostRoundDecide('OPPONENT');
                     } else {
-                        // ゲスト自身が溢れた → ホストに「自分が負けた」ことを通知
                         if (conn && conn.open) {
                             conn.send({ type: 'guest_game_over' });
                         }
-                        // ゲスト視点での敗北画面を表示
                         triggerSoloGameOver("ラウンド敗北... (玉が溢れました)");
                     }
                 } else {
@@ -666,7 +660,6 @@ function handleTimeOutGameOver() {
 function checkBattleSetEnd(roundWinner) {
     if (myWins >= targetWins || opponentWins >= targetWins) {
         battleWinner = (battleRole === 'host' && myWins >= targetWins) || (battleRole === 'guest' && roundWinner === 'YOU') ? 'YOU' : 'OPPONENT';
-        // ゲスト側の勝利判定微調整
         if (battleRole === 'guest') {
             battleWinner = (opponentWins >= targetWins) ? 'OPPONENT' : 'YOU';
         }
@@ -1019,10 +1012,11 @@ function update() {
     if (attackNoticeTimer > 0) attackNoticeTimer--;
     if (shakeTimer > 0) shakeTimer--;
 
+    // 💥 飛来中のお邪魔玉の更新（上から下に落下）
     for (let i = flyingOjamaList.length - 1; i >= 0; i--) {
         let oj = flyingOjamaList[i];
         oj.y += oj.vy;
-        if (oj.y <= oj.targetY) {
+        if (oj.y >= oj.targetY) {
             applyOjamaToGrid(oj.color);
             flyingOjamaList.splice(i, 1);
         }
