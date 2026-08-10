@@ -1,11 +1,11 @@
 /* ==========================================
-   ○o WING GAME玉 o○ - メインスクリプト (Ver.1.06 iOS対応版)
+   ○o WING GAME玉 o○ - メインスクリプト (Ver.1.07 iOS完全対応版)
    ========================================== */
 
 // --- 定数・ゲーム設定 ---
 const COLS = 8;
 const ROWS = 12;
-const BUBBLE_COLORS = 5; // 0:なし, 1:赤, 2:緑, 3:青, 4:黄, 5:紫
+const BUBBLE_COLORS = 5; 
 const REAL_COLOR_HEX = {
     1: '#ff4d4d',
     2: '#2ecc71',
@@ -14,31 +14,25 @@ const REAL_COLOR_HEX = {
     5: '#9b59b6'
 };
 
-// --- キャンバス・DOM要素の取得 ---
 let canvas, ctx;
-
-// --- グローバル変数 ---
 let currentScreen = 'screen-title';
-let gameMode = 'solo'; // 'solo' or 'battle'
-let battleType = 'タイムアタック'; // 'タイムアタック' or 'お邪魔対戦'
+let gameMode = 'solo'; 
+let battleType = 'タイムアタック'; 
 let targetWins = 1;
-let myRole = ''; // 'host' or 'guest'
+let myRole = ''; 
 
-// ソロプレイ用
 let soloStage = 1;
 let soloScore = 0;
 let soloBubblesPopped = 0;
 
-// バトルプレイ用
 let peer = null;
 let conn = null;
 let roomCode = '';
 let myWins = 0;
 let opponentWins = 0;
-let battleTimer = 60; // タイムアタック用
+let battleTimer = 60;
 let battleTimerInterval = null;
 
-// ゲーム盤面・操作ステート
 let grid = []; 
 let currentBubble = null; 
 let nextBubble = null;    
@@ -51,18 +45,16 @@ let dragStartY = 0;
 let touchCurrentX = 0;
 let touchCurrentY = 0;
 
-let shooterX = 200; // 後でキャンバスサイズに合わせて初期化
+let shooterX = 200;
 let shooterY = 690;
 let bubbleRadius = 20;
 
 let flyingBubble = null; 
 
-// アイテム関連
 let bombAvailable = true;
 let rainbowAvailable = true;
 let activeItem = null; 
 
-// 消去カウント（自分・相手）
 let myPopCount = 0;
 let oppPopCount = 0;
 let gameLoopActive = false;
@@ -70,43 +62,62 @@ let gameLoopActive = false;
 // --- 起動時初期化 ---
 window.addEventListener('load', () => {
     canvas = document.getElementById('gameCanvas');
-    ctx = canvas.getContext('2d');
-    
-    // キャンバスの内部解像度を固定（HTMLのwidth="400" height="750"に合わせる）
-    shooterX = canvas.width / 2;
-    shooterY = canvas.height - 60;
+    if (canvas) {
+        ctx = canvas.getContext('2d');
+        shooterX = canvas.width / 2;
+        shooterY = canvas.height - 60;
+    }
 
     initGrid();
     showScreen('screen-title');
     
-    // iOSでのタッチ無効化による誤作動を防ぐため、HTML側のonclickとtouchendを両方サポート
-    setupGlobalTouchEvents();
+    // ★ iOS向け：すべての画面・ボタンのタッチイベントを強制バインド
+    bindIosTouchEvents();
     
     requestAnimationFrame(gameLoop);
 });
 
-// --- iOS対応の画面タッチ・クリック補助 ---
-function setupGlobalTouchEvents() {
-    // タイトル画面の特別タップ対応（iOS対策）
+// --- iOSでのタップ無反応を完全に防ぐ強力なバインド関数 ---
+function bindIosTouchEvents() {
+    // 画面全体、またはタイトル画面全体をタッチしたときの対策
     const titleScreen = document.getElementById('screen-title');
     if (titleScreen) {
-        const handleTitleTouch = (e) => {
-            e.preventDefault();
-            goToHowToPlay();
+        const handleTouch = (e) => {
+            // ゲーム画面以外（オーバーレイが表示されている時）のみ反応させる
+            if (currentScreen === 'screen-title') {
+                e.preventDefault(); // iOS特有の遅延やズームを防止
+                goToHowToPlay();
+            }
         };
-        titleScreen.addEventListener('click', handleTitleTouch);
-        titleScreen.addEventListener('touchend', handleTitleTouch);
+        titleScreen.addEventListener('click', handleTouch);
+        titleScreen.addEventListener('touchend', handleTouch, { passive: false });
     }
+
+    // もしHTML側に「スタートボタン」や「画面をタップ」などの個別のボタンがある場合も一括登録
+    document.querySelectorAll('.menu-btn, .overlay-screen, button').forEach(el => {
+        el.addEventListener('touchstart', (e) => {
+            // ボタン自体のデフォルトの挙動を阻害しないよう、必要に応じて調整
+        }, { passive: true });
+    });
 }
 
 // --- 画面遷移管理 ---
 function showScreen(screenId) {
     document.querySelectorAll('.overlay-screen').forEach(screen => {
         screen.style.display = 'none';
+        screen.style.pointerEvents = 'none'; // タッチ抜け防止
     });
+    
+    if (screenId === '') {
+        // ゲームプレイ中の場合はオーバーレイをすべて消す
+        currentScreen = '';
+        return;
+    }
+
     const target = document.getElementById(screenId);
     if (target) {
         target.style.display = 'flex';
+        target.style.pointerEvents = 'auto'; // タッチを有効化
         currentScreen = screenId;
     }
 }
@@ -161,7 +172,7 @@ function startStage(stageNum) {
     myPopCount = 0;
     oppPopCount = 0;
 
-    showScreen(''); // ゲーム画面へ（すべてのオーバーレイを非表示）
+    showScreen(''); // ゲーム画面へ
     gameLoopActive = true;
 }
 
@@ -178,7 +189,7 @@ function spawnNewBubble() {
 }
 
 // ==========================================
-// 操作・タッチイベント（iOS完全対応・座標ズレ防止）
+// 操作・タッチイベント（iOS完全対応キャンバス操作）
 // ==========================================
 window.addEventListener('DOMContentLoaded', () => {
     const canvasEl = document.getElementById('gameCanvas');
@@ -198,24 +209,17 @@ window.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    // iOSでのタッチ遅延・反応抜けを防ぐため passive: false を維持
     canvasEl.addEventListener('touchstart', (e) => {
         if (!gameLoopActive || flyingBubble) return;
         e.preventDefault();
         const pos = getCanvasPos(e);
         
-        // 右側アイテムボタン（ボム）
         if (pos.x > canvasEl.width - 90 && pos.y > canvasEl.height - 130 && pos.y < canvasEl.height - 70) {
-            if (bombAvailable) {
-                activeItem = activeItem === 'bomb' ? null : 'bomb';
-            }
+            if (bombAvailable) activeItem = activeItem === 'bomb' ? null : 'bomb';
             return;
         }
-        // 右側アイテムボタン（レインボー）
         if (pos.x > canvasEl.width - 90 && pos.y > canvasEl.height - 65) {
-            if (rainbowAvailable) {
-                activeItem = activeItem === 'rainbow' ? null : 'rainbow';
-            }
+            if (rainbowAvailable) activeItem = activeItem === 'rainbow' ? null : 'rainbow';
             return;
         }
 
@@ -241,7 +245,6 @@ window.addEventListener('DOMContentLoaded', () => {
         shootBubble();
     }, { passive: false });
 
-    // マウス操作（PC用）
     canvasEl.addEventListener('mousedown', (e) => {
         if (!gameLoopActive || flyingBubble) return;
         const pos = getCanvasPos(e);
@@ -550,6 +553,7 @@ function checkGameConditions() {
 
 // --- 描画処理 ---
 function draw() {
+    if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     for (let r = 0; r < ROWS; r++) {
@@ -583,7 +587,6 @@ function draw() {
     drawItemButton(canvas.width - 50, canvas.height - 100, '💣', bombAvailable, activeItem === 'bomb');
     drawItemButton(canvas.width - 50, canvas.height - 35, '★', rainbowAvailable, activeItem === 'rainbow');
 
-    // カウント表示
     ctx.save();
     ctx.font = 'bold 20px sans-serif';
     ctx.textAlign = 'left';
@@ -656,9 +659,7 @@ function drawItemButton(x, y, symbol, available, active) {
     ctx.restore();
 }
 
-// ==========================================
-// P2P通信・対戦マッチング処理 (PeerJS)
-// ==========================================
+// --- P2P通信・対戦マッチング処理 (PeerJS) ---
 function setupRole(role) {
     myRole = role;
     if (role === 'host') {
@@ -683,9 +684,7 @@ function initPeerHost() {
         showScreen('screen-host-rule-setup');
     });
 
-    peer.on('error', (err) => {
-        console.error(err);
-    });
+    peer.on('error', (err) => { console.error(err); });
 }
 
 function joinRoom() {
@@ -723,16 +722,13 @@ function cancelNetwork(targetScreen) {
 
 function setupConnectionEvents() {
     if (!conn) return;
-    conn.on('data', (data) => {
-        handlePeerData(data);
-    });
+    conn.on('data', (data) => { handlePeerData(data); });
     conn.on('close', () => {
         alert('対戦相手が切断しました。');
         returnToTitle();
     });
 }
 
-// --- ホスト側ルール設定 ---
 let selectedHostBattleType = 'タイムアタック';
 let selectedHostTargetWins = 1;
 
@@ -888,7 +884,6 @@ function cleanupBattle() {
     gameLoopActive = false;
 }
 
-// --- その他メニュー用スタブ ---
 function showRankingBoard() { alert('ランキング機能準備中'); }
 function openSettings() { alert('画像設定機能準備中'); }
 function closeSettings() { showScreen('screen-mode'); }
