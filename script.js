@@ -95,6 +95,15 @@ let targetWins = 1;
 let myWins = 0;
 let opponentWins = 0;
 
+// --- 🎯 新仕様：消した玉数カウント・マイルストーン演出管理 ---
+let myClearedBubbleCount = 0;
+let opponentClearedBubbleCount = 0;
+const TARGET_CLEARED_COUNT = 500;
+let activeMarqueeText = "";
+let marqueeX = 305;
+let marqueeTimer = 0;
+let triggeredMilestones = new Set(); // 相手の既到達マイルストーン記憶用
+
 let battleRole = ''; 
 let roomCode = '';
 let gameState = 'title';
@@ -109,14 +118,13 @@ let turnRemainingTime = TURN_TIME_LIMIT;
 let turnTimerInterval = null;
 
 // --- 🎁 アイテムシステム管理変数 (ストック上限5個へ拡張) ---
-// インデックス 0:お邪魔×2, 1:お邪魔×3, 2:スキップ, 3:貫通, 4:色変更
-let itemStockCounts = [0, 0, 0, 0, 0]; // 各アイテムのストック数（最大5個まで）
-let activeItems = []; // 最大2個まで同時選択可能
+let itemStockCounts = [0, 0, 0, 0, 0]; 
+let activeItems = []; 
 let isRouletteActive = false;
 let rouletteItemIndex = 0;
 let rouletteInterval = null;
-let isRouletteStopping = false; // 停止中の演出用
-let rouletteStopShakeTimer = 0; // ルーレット停止時の震えタイマー
+let isRouletteStopping = false; 
+let rouletteStopShakeTimer = 0; 
 let colorChangeStep = 0; 
 let colorChangeSourceColor = '';
 
@@ -238,7 +246,7 @@ function forceTimeoutTurnEnd() {
     isMoving = false;
     spawnBullet();
     if (conn && conn.open) {
-        conn.send({ type: 'sync_turn_action', ojamaAmount: 0, didClear: false, activeItemsUsed: [] });
+        conn.send({ type: 'sync_turn_action', ojamaAmount: 0, didClear: false, activeItemsUsed: [], myClearedCount: myClearedBubbleCount });
     }
     switchTurnToOpponent();
 }
@@ -277,6 +285,10 @@ function initGridForStage(stage) {
     flyingOjamaList = [];
     itemStockCounts = [0, 0, 0, 0, 0];
     activeItems = [];
+    myClearedBubbleCount = 0;
+    opponentClearedBubbleCount = 0;
+    triggeredMilestones.clear();
+    activeMarqueeText = "";
     
     for (let r = 0; r < ROWS; r++) {
         let row = [];
@@ -422,8 +434,9 @@ function setupConnectionListeners() {
                 executeOpponentAction(data);
             } else if (data.type === 'guest_game_over') {
                 handleHostRoundDecide('OPPONENT');
-            } else if (data.type === 'guest_request_round_win' && battleType === 'タイムアタック') {
-                handleHostRoundDecide('OPPONENT');
+            } else if (data.type === 'guest_request_round_win' || data.type === 'guest_request_500_win') {
+                let winnerRole = (data.type === 'guest_request_500_win') ? 'OPPONENT' : 'OPPONENT';
+                handleHostRoundDecide(winnerRole);
             } else if (data.type === 'rematch') {
                 myWins = 0;
                 opponentWins = 0;
@@ -469,7 +482,7 @@ function displayBattleRulesDesc() {
     if (battleType === 'タイムアタック') {
         desc = `<b>【⏱️ タイムアタック】</b><br>画面上の消せる玉を相手より先にすべて消した方の勝利！<br><br>• 勝利条件: ${targetWins}勝先取`;
     } else {
-        desc = `<b>【⚔️ ターン制お邪魔対戦】</b><br>じゃんけんで先攻後攻を決定！交互に玉を打ちます。<br>出現する「？」付きの玉を消すとアイテムルーレットが発生！<br>（アイテムは同時に2個まで使用可能/ストック5個まで）<br><br>• 勝利条件: ${targetWins}勝先取`;
+        desc = `<b>【⚔️ ターン制お邪魔対戦】</b><br>じゃんけんで先攻後攻を決定！交互に玉を打ちます。<br>出現する「？」付きの玉を消すとアイテムルーレットが発生！<br><b>✨新ルール: 先に500個消すか、玉が危険ライン（点線）を超えると敗北！</b><br><br>• 勝利条件: ${targetWins}勝先取`;
     }
     document.getElementById('rules-text-content').innerHTML = desc;
     showScreen('screen-battle-rules-desc');
@@ -675,7 +688,12 @@ function executeOpponentAction(data) {
     let activeItemsUsed = data.activeItemsUsed || [];
     let actualOjama = data.ojamaAmount;
 
-    // 相手が貫通(3)を使用しており、こちらがお邪魔を受けている場合、相殺して無効化
+    if (data.myClearedCount !== undefined) {
+        opponentClearedBubbleCount = data.myClearedCount;
+        checkMilestoneAndTriggerMarquee(opponentClearedBubbleCount);
+        check500WinCondition();
+    }
+
     if (activeItemsUsed.includes(3) && actualOjama > 0) {
         actualOjama = 0; 
     }
@@ -695,7 +713,25 @@ function executeOpponentAction(data) {
     }
 }
 
-// --- 🎁 アイテムルーレット関連処理（ストップ時の震え演出追加） ---
+// --- 💬 マイルストーン演出トリガー関数 ---
+function checkMilestoneAndTriggerMarquee(count) {
+    let milestones = [100, 200, 300, 400, 450];
+    for (let m of milestones) {
+        if (count >= m && !triggeredMilestones.has(m)) {
+            triggeredMilestones.add(m);
+            triggerMarqueeAnnouncement(`相手が ${m} 個の玉を消しました！`);
+            break;
+        }
+    }
+}
+
+function triggerMarqueeAnnouncement(text) {
+    activeMarqueeText = text;
+    marqueeX = 305;
+    marqueeTimer = 180; // 約3秒間流れる
+}
+
+// --- 🎁 アイテムルーレット関連処理 ---
 function triggerItemRoulette() {
     isRouletteActive = true;
     isRouletteStopping = false;
@@ -732,7 +768,6 @@ function updateRouletteDisplay() {
     let displayBox = document.getElementById('roulette-display-box');
     if (displayBox) {
         displayBox.innerText = names[rouletteItemIndex];
-        // 震え演出中ならランダムオフセットを適用
         if (rouletteStopShakeTimer > 0) {
             let offsetX = (Math.random() - 0.5) * 8;
             let offsetY = (Math.random() - 0.5) * 8;
@@ -777,7 +812,6 @@ function stopItemRoulette() {
     isRouletteStopping = true;
     clearInterval(rouletteInterval);
 
-    // 決定時の演出（ボタンの見た目変更とサウンド）
     playSE(se.ballLand);
     let stopBtn = document.getElementById('btn-stop-roulette');
     if (stopBtn) {
@@ -785,7 +819,6 @@ function stopItemRoulette() {
         stopBtn.innerText = 'GET!';
     }
 
-    // 枠の激しい震え演出（約400ms間）
     rouletteStopShakeTimer = 25;
     let shakeInterval = setInterval(() => {
         rouletteStopShakeTimer--;
@@ -801,7 +834,6 @@ function finalizeRouletteItem() {
     if (!isRouletteActive) return;
     isRouletteActive = false;
     
-    // ストック上限5個まで加算
     if (itemStockCounts[rouletteItemIndex] < 5) {
         itemStockCounts[rouletteItemIndex]++;
     }
@@ -887,7 +919,6 @@ function createColorChangeOverlayDOM() {
         document.getElementById('btn-cancel-cc').addEventListener(evt, (e) => {
             e.preventDefault();
             document.getElementById('colorchange-overlay').style.display = 'none';
-            // 色変更アイテム選択をキャンセルした場合は消費しない
             if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
                 startTurnTimer(); 
             }
@@ -923,7 +954,6 @@ function handleColorChangeStep2(targetColor) {
     }
     playSE(se.rainbowLand);
     
-    // アイテム消費処理（ストックを減らす、activeItemsから外す）
     if (itemStockCounts[4] > 0) {
         itemStockCounts[4]--;
     }
@@ -934,27 +964,21 @@ function handleColorChangeStep2(targetColor) {
     }
 }
 
-// --- 🎁 アイテムボタンタップ（最大2個まで同時選択可・倍率系は排他制御） ---
 function clickItemButton(idx) {
     if (gameMode !== 'battle' || battleType !== 'お邪魔対戦' || battleTurnState !== 'my_turn') return;
     if (isMoving) return;
-    if (itemStockCounts[idx] <= 0) return; // ストックがなければ使用不可
+    if (itemStockCounts[idx] <= 0) return;
 
-    // すでに選択中なら選択解除
     if (activeItems.includes(idx)) {
         activeItems = activeItems.filter(i => i !== idx);
         return;
     }
 
-    // 倍率系（0:お邪魔×2 と 1:お邪魔×3）は排他的なため、一方が選ばれている場合はもう一方を選択できないようにする
     if ((idx === 0 && activeItems.includes(1)) || (idx === 1 && activeItems.includes(0))) {
-        // すでに選ばれている倍率系を解除して新しく選ぶ、あるいはガードする
         activeItems = activeItems.filter(i => i !== 0 && i !== 1);
     }
 
-    // 同時使用上限は2個まで
     if (activeItems.length >= 2) {
-        // すでに2個選ばれている場合、一番最初に入れたものを外して新しいものを入れる
         activeItems.shift();
     }
 
@@ -1189,10 +1213,13 @@ function triggerSoloGameOver(msg) {
     showScreen('screen-game-over');
 }
 
+// --- 🛑 修正：危険ライン（ゲームオーバー判定）のセーフ判定調整 ---
 function checkGameOverCondition() {
     if (gameState !== 'playing') return;
     if (flyingOjamaList.length > 0) return;
+    if (fallingBubbles.length > 0 || flashingBubbles.length > 0) return; // 消去アニメーション中はまだ判定保留（セーフの可能性あり）
 
+    // 敗北ラインの行（例: 制限行は ROWS - 1 以降など。従来は limitRow = ROWS - 1）
     let limitRow = ROWS - 1; 
 
     for (let r = limitRow; r < ROWS; r++) {
@@ -1210,13 +1237,39 @@ function checkGameOverCondition() {
                         if (conn && conn.open) {
                             conn.send({ type: 'guest_game_over' });
                         }
-                        triggerSoloGameOver("ラウンド敗北... (玉が溢れました)");
+                        triggerSoloGameOver("ラウンド敗北... (玉が危険ラインを超えました)");
                     }
                 } else {
                     triggerSoloGameOver(`ステージ ${currentStage} で終了`);
                 }
                 return;
             }
+        }
+    }
+}
+
+// --- 🏆 500個先取ルールのチェック関数 ---
+function check500WinCondition() {
+    if (gameState !== 'playing' || gameMode !== 'battle' || battleType !== 'お邪魔対戦') return;
+
+    if (myClearedBubbleCount >= TARGET_CLEARED_COUNT) {
+        stopBGM();
+        stopTurnTimer();
+        gameState = 'gameover_menu';
+        if (battleRole === 'host') {
+            handleHostRoundDecide('YOU');
+        } else {
+            if (conn && conn.open) conn.send({ type: 'guest_request_500_win' });
+            handleHostRoundDecide('YOU');
+        }
+    } else if (opponentClearedBubbleCount >= TARGET_CLEARED_COUNT) {
+        stopBGM();
+        stopTurnTimer();
+        gameState = 'gameover_menu';
+        if (battleRole === 'host') {
+            handleHostRoundDecide('OPPONENT');
+        } else {
+            triggerSoloGameOver("相手が500個達成しました...");
         }
     }
 }
@@ -1431,7 +1484,6 @@ canvas.addEventListener('touchstart', (e) => {
     let pos = getTouchPos(e);
 
     if (gameMode === 'battle' && battleType === 'お邪魔対戦' && battleTurnState === 'my_turn') {
-        // アイテムボタン判定領域 (X: 305〜400, Y: 350〜595)
         if (pos.x >= 305 && pos.x <= 400 && pos.y >= 350 && pos.y <= 595) {
             let relY = pos.y - 350;
             let btnH = 43;
@@ -1531,7 +1583,6 @@ function releaseBullet() {
     let launchAngle = Math.atan2(-pullY, -pullX);
     
     if (launchAngle < -0.05 && launchAngle > -Math.PI + 0.05) {
-        // 貫通アイテムが選択されている場合
         if (activeItems.includes(3)) {
             let reflections = countWallReflections(launchAngle, speed);
             if (reflections > 2) {
@@ -1667,6 +1718,10 @@ function update() {
     if (attackNoticeTimer > 0) attackNoticeTimer--;
     if (opponentTurnNoticeTimer > 0) opponentTurnNoticeTimer--;
     if (shakeTimer > 0) shakeTimer--;
+    if (marqueeTimer > 0) {
+        marqueeTimer--;
+        marqueeX -= 3; // テロップを左へ流す
+    }
 
     for (let i = flyingOjamaList.length - 1; i >= 0; i--) {
         let oj = flyingOjamaList[i];
@@ -1694,11 +1749,13 @@ function update() {
             flashingBubbles.splice(i, 1);
             removeFloating();
             checkClearCondition();
+            checkGameOverCondition(); // 消去後にラインを超えていないか判定
         }
     }
 
     if (fallingBubbles.length === 0 && flashingBubbles.length === 0 && flyingOjamaList.length === 0 && gameState === 'playing') {
         checkClearCondition();
+        checkGameOverCondition();
     }
 
     if (gameState === 'playing' && isMoving) {
@@ -1737,6 +1794,7 @@ function update() {
                                 fallingBubbles.push({ x: pos.x, y: pos.y, vy: 2 + Math.random() * 2, color: cell.color, isMystery: cell.isMystery });
                                 grid[r][c] = null;
                                 score += 20;
+                                myClearedBubbleCount++;
                             }
                         }
                     }
@@ -1772,11 +1830,13 @@ function snapBullet() {
     let cell = findCellForPosition(bulletX, bulletY);
     
     let baseClearedCount = 0;
+    let turnClearedCount = 0;
 
     if (wasPiercing) {
         playSE(se.bombExplode);
         let floatCount = removeFloating();
         baseClearedCount = floatCount + 5;
+        turnClearedCount = baseClearedCount;
     } else if (cell.r >= 0 && cell.r < ROWS) {
         let colsInRow = (cell.r % 2 === 0) ? COLS : COLS - 1;
         cell.c = Math.max(0, Math.min(colsInRow - 1, cell.c));
@@ -1801,6 +1861,7 @@ function snapBullet() {
                         flashList.push({ r: ac.r, c: ac.c });
                         grid[ac.r][ac.c] = null;
                         baseClearedCount++;
+                        turnClearedCount++;
                     }
                 }
                 triggerFlashEffect(flashList, flashList.length * 40);
@@ -1832,6 +1893,7 @@ function snapBullet() {
                     score += clearedCount * 30;
                     let floatCount = removeFloating();
                     baseClearedCount = clearedCount + floatCount;
+                    turnClearedCount = baseClearedCount;
                 }
             } else {
                 playSE(se.ballLand);
@@ -1847,41 +1909,39 @@ function snapBullet() {
                     }
                     let floatCount = removeFloating();
                     baseClearedCount = matches.length + floatCount;
+                    turnClearedCount = baseClearedCount;
                 }
             }
         }
     }
     
+    myClearedBubbleCount += turnClearedCount;
+    check500WinCondition();
     spawnBullet();
 
-    // --- お邪魔玉の飛翔量の計算（消した玉数の基本「2倍」＋アイテム倍率適用） ---
     let generatedOjama = baseClearedCount * 2; 
 
-    // 使用中アイテムの消費と適用処理
     let itemsUsedThisTurn = [...activeItems];
     
-    // ストック数を減少させ、activeItemsからクリア
     for (let usedIdx of itemsUsedThisTurn) {
         if (itemStockCounts[usedIdx] > 0) {
             itemStockCounts[usedIdx]--;
         }
     }
 
-    // アイテム倍率の適用
     if (itemsUsedThisTurn.includes(0)) {
-        generatedOjama *= 2; // お邪魔×2（さらに2倍）
+        generatedOjama *= 2; 
     }
     if (itemsUsedThisTurn.includes(1)) {
-        generatedOjama *= 3; // お邪魔×3（さらに3倍）
+        generatedOjama *= 3; 
     }
 
     if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
         if (conn && conn.open) {
-            conn.send({ type: 'sync_turn_action', ojamaAmount: generatedOjama, didClear: false, activeItemsUsed: itemsUsedThisTurn });
+            conn.send({ type: 'sync_turn_action', ojamaAmount: generatedOjama, didClear: false, activeItemsUsed: itemsUsedThisTurn, myClearedCount: myClearedBubbleCount });
         }
 
         if (itemsUsedThisTurn.includes(2)) {
-            // スキップアイテム適用時は連続ターン
             battleTurnState = 'my_turn';
             startTurnTimer();
         } else {
@@ -1928,42 +1988,66 @@ function draw() {
         if (battleType === 'お邪魔対戦') {
             ctx.fillStyle = (battleTurnState === 'my_turn') ? "#4dff4d" : "#ff4d4d";
             ctx.font = "bold 12px sans-serif";
-            ctx.fillText(battleTurnState === 'my_turn' ? `あなたの番 (${turnRemainingTime}s)` : "相手の番", 312, 110);
+            ctx.fillText(battleTurnState === 'my_turn' ? `あなたの番 (${turnRemainingTime}s)` : "相手の番", 312, 105);
+
+            // --- 📊 消した玉数カウントのGUI表示（大きめ） ---
+            ctx.fillStyle = "#4da6ff";
+            ctx.font = "bold 9px sans-serif";
+            ctx.fillText("MY消去数", 352, 128);
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 15px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(`${myClearedBubbleCount}/500`, 352, 146);
+
+            ctx.fillStyle = "#ff7777";
+            ctx.font = "bold 9px sans-serif";
+            ctx.fillText("OPP消去数", 352, 168);
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 15px sans-serif";
+            ctx.fillText(`${opponentClearedBubbleCount}/500`, 352, 186);
+            ctx.textAlign = "left";
         }
     } else {
         ctx.fillStyle = "#ffcc00";
         ctx.fillText(`ST ${currentStage}/10`, 312, 25);
         ctx.fillStyle = "#fff";
         ctx.fillText(`TIME: ${remainingTime}s`, 312, 45);
+        ctx.fillStyle = "#4da6ff";
+        ctx.font = "bold 11px sans-serif";
+        ctx.fillText(`SCORE:`, 312, 135);
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 12px sans-serif";
+        ctx.fillText(`${score}`, 312, 153);
     }
-    ctx.fillStyle = "#4da6ff";
-    ctx.font = "bold 11px sans-serif";
-    ctx.fillText(`SCORE:`, 312, 135);
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 12px sans-serif";
-    ctx.fillText(`${score}`, 312, 153);
 
-    ctx.fillStyle = "#aaa";
-    ctx.font = "bold 11px sans-serif";
-    ctx.fillText("NEXT", 336, 192);
-    drawBubble(352, 232, nextBubble.color, 17, false, nextBubble.isMystery);
+    if (!(gameMode === 'battle' && battleType === 'お邪魔対戦')) {
+        ctx.fillStyle = "#aaa";
+        ctx.font = "bold 11px sans-serif";
+        ctx.fillText("NEXT", 336, 192);
+        drawBubble(352, 232, nextBubble.color, 17, false, nextBubble.isMystery);
+    } else {
+        ctx.fillStyle = "#aaa";
+        ctx.font = "bold 11px sans-serif";
+        ctx.fillText("NEXT", 336, 206);
+        drawBubble(352, 244, nextBubble.color, 17, false, nextBubble.isMystery);
+    }
 
     let btnBg = bombUsesLeft > 0 ? "#ff5722" : "#333";
     ctx.fillStyle = btnBg;
-    ctx.beginPath(); ctx.roundRect(312, 260, 80, 75, 10); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(312, 275, 80, 70, 10); ctx.fill();
     ctx.strokeStyle = bombUsesLeft > 0 ? "#fff" : "#555"; ctx.lineWidth = 2; ctx.stroke(); ctx.closePath();
 
     ctx.fillStyle = bombUsesLeft > 0 ? "#fff" : "#777";
     ctx.font = "bold 12px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("💣ボム", 352, 295);
-    ctx.fillText(`(${bombUsesLeft})`, 352, 318);
+    ctx.fillText("💣ボム", 352, 305);
+    ctx.fillText(`(${bombUsesLeft})`, 352, 325);
 
     if (gameMode === 'battle' && battleType === 'お邪魔対戦') {
         let itemNames = ['①お邪魔×2', '②お邪魔×3', '③スキップ', '④貫通', '⑤色変更'];
-        let itemStartY = 350;
-        let itemBtnH = 43;
-        let itemGap = 5;
+        let itemStartY = 355;
+        let itemBtnH = 40;
+        let itemGap = 4;
 
         for (let i = 0; i < 5; i++) {
             let by = itemStartY + i * (itemBtnH + itemGap);
@@ -1976,15 +2060,27 @@ function draw() {
             ctx.lineWidth = isSelected ? 3 : 1.5; ctx.stroke(); ctx.closePath();
 
             ctx.fillStyle = count > 0 ? "#ffffff" : "#666";
-            ctx.font = "bold 11px sans-serif";
-            ctx.fillText(itemNames[i], 352, by + 22);
-            // ストック数 / 上限5個 の表示
             ctx.font = "bold 10px sans-serif";
+            ctx.fillText(itemNames[i], 352, by + 18);
+            ctx.font = "bold 9px sans-serif";
             ctx.fillStyle = isSelected ? "#111" : "#ffcc00";
-            ctx.fillText(`[${count}/5]`, 352, by + 37);
+            ctx.fillText(`[${count}/5]`, 352, by + 32);
         }
     }
     ctx.textAlign = "left";
+
+    // --- 🔴 危険ライン（点線）の描画 ---
+    let dangerRow = ROWS - 1;
+    let dangerY = dangerRow * ROW_HEIGHT + TOP_MARGIN;
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 77, 77, 0.85)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, dangerY);
+    ctx.lineTo(305, dangerY);
+    ctx.stroke();
+    ctx.restore();
 
     for (let r = 0; r < ROWS; r++) {
         let colsInRow = (r % 2 === 0) ? COLS : COLS - 1;
@@ -2032,6 +2128,23 @@ function draw() {
         drawBubble(bulletX, bulletY, bulletData.color, RADIUS, false, bulletData.isMystery);
     } else {
         drawBubble(shooterX, shooterY, bulletData.color, RADIUS, false, bulletData.isMystery);
+    }
+
+    // --- 🏃‍♂️ 流れる文字（マイルストーンテロップ）の描画 ---
+    if (marqueeTimer > 0 && activeMarqueeText !== "") {
+        ctx.save();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+        ctx.fillRect(0, canvas.height / 2 - 25, 305, 40);
+        ctx.strokeStyle = "#ffcc00";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(0, canvas.height / 2 - 25, 305, 40);
+
+        ctx.fillStyle = "#ffcc00";
+        ctx.font = "bold 14px sans-serif";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(activeMarqueeText, marqueeX, canvas.height / 2 - 5);
+        ctx.restore();
     }
 
     if (gameMode === 'battle' && battleType === 'お邪魔対戦' && battleTurnState === 'opponent_turn') {
@@ -2111,7 +2224,7 @@ function drawTitleBackground() {
     ctx.textAlign = "center";
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#888888";
-    ctx.fillText("Ver 1.14", canvas.width / 2, canvas.height / 2 + 75);
+    ctx.fillText("Ver 1.15", canvas.width / 2, canvas.height / 2 + 75);
     ctx.restore();
 }
 
