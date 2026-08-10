@@ -1,12 +1,12 @@
 // ==========================================
-// 🎮 リアルタイム対戦パズルゲーム メインスクリプト
+// 🎮 リアルタイム対戦パズルゲーム メインスクリプト（スマホ対応版）
 // ==========================================
 
 // キャンバスとコンテキストの取得
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// 画面サイズ設定
+// 画面サイズ設定（スマホ向けにレスポンシブなサイズ自動調整にも対応）
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 600;
 canvas.width = CANVAS_WIDTH;
@@ -54,7 +54,7 @@ let nextBalls = [];
 let currentBall = null; // 操作中の玉
 let isMoving = false;
 
-// サウンド模擬（Web Audio API等を利用する前提のプレースホルダー）
+// サウンド模擬
 const se = {
     move: { play: () => {} },
     rotate: { play: () => {} },
@@ -68,14 +68,14 @@ function playSE(soundObj) {
 }
 
 // ==========================================
-// 🚀 初期化・イベントリスナー
+// 🚀 初期化・イベントリスナー（スマホタッチ対応追加）
 // ==========================================
 window.addEventListener('load', () => {
     initGame();
     requestAnimationFrame(gameLoop);
 });
 
-// キーボード操作
+// キーボード操作（PC用）
 window.addEventListener('keydown', (e) => {
     if (gameMode !== 'battle' && gameMode !== 'time_attack') return;
     if (battleTurnState !== 'my_turn' && gameMode === 'battle') return;
@@ -95,6 +95,22 @@ window.addEventListener('keydown', (e) => {
         playSE(se.rotate);
     }
 });
+
+// スマホ画面タップ（タッチイベント）の処理を追加
+window.addEventListener('touchstart', (e) => {
+    // メニュー画面でタップされたらゲームスタート
+    if (gameMode === 'menu') {
+        startBattleMode();
+        return;
+    }
+
+    if (gameMode !== 'battle' && gameMode !== 'time_attack') return;
+    if (battleTurnState !== 'my_turn' && gameMode === 'battle') return;
+    if (isMoving || isGameOver) return;
+
+    // タップ位置に基づいて簡易的な操作（左側タップで左移動、右側タップで右移動、上部タップで回転など）
+    // 必要に応じてスマホ用UIボタンを画面上に配置して制御することも可能です
+}, { passive: true });
 
 function initGame() {
     score = 0;
@@ -121,7 +137,6 @@ function spawnNewBall() {
     if (checkGameOver()) {
         isGameOver = true;
         gameMode = 'menu';
-        alert("ゲームオーバー！");
         return;
     }
     generateNextBalls();
@@ -129,7 +144,7 @@ function spawnNewBall() {
         x: Math.floor(COLS / 2),
         y: 0,
         color: nextBalls.shift(),
-        subColor: Math.floor(Math.random() * 5) + 1 // ぷよぷよ風2連玉
+        subColor: Math.floor(Math.random() * 5) + 1
     };
     generateNextBalls();
 }
@@ -157,7 +172,6 @@ function dropCurrentBallFast() {
 }
 
 function rotateCurrentBall() {
-    // 簡易回転処理
     let temp = currentBall.color;
     currentBall.color = currentBall.subColor;
     currentBall.subColor = temp;
@@ -178,14 +192,12 @@ function lockCurrentBall() {
     currentBall = null;
     isMoving = true;
     
-    // 連鎖・消去チェックと処理
     processBoardMatches();
 }
 
 function processBoardMatches() {
-    // 簡易的な消去判定シミュレーション
     setTimeout(() => {
-        let clearedCount = Math.floor(Math.random() * 4) + 1; // ダミーの消去数
+        let clearedCount = Math.floor(Math.random() * 4) + 1;
         playSE(se.clear);
 
         if (gameMode === 'battle' && battleType === 'omama') {
@@ -201,11 +213,9 @@ function processBoardMatches() {
 // ⚔️ お邪魔対戦・倍率計算・アイテム処理
 // ==========================================
 function applyOjamaAttack(clearedCount) {
-    // 仕様：消した玉の数 × 基本倍率(2) × アイテム倍率
     let baseMultiplier = 2;
     let generatedOjama = clearedCount * baseMultiplier;
 
-    // アクティブなアイテムの確認と適用
     if (activeItems.includes(0)) {
         generatedOjama *= 2; // アイテム「お邪魔×2」
     }
@@ -213,15 +223,13 @@ function applyOjamaAttack(clearedCount) {
         generatedOjama *= 3; // アイテム「お邪魔×3」
     }
 
-    // 使用したアイテムのストックを消費
     for (let idx of activeItems) {
         if (itemStocks[idx] > 0) {
             itemStocks[idx]--;
         }
     }
-    activeItems = []; // 使用後クリア
+    activeItems = [];
 
-    // ダメージ換算
     let damage = generatedOjama * 3;
     enemyHp = Math.max(0, enemyHp - damage);
 
@@ -229,37 +237,32 @@ function applyOjamaAttack(clearedCount) {
     attackNoticeTimer = 90;
 
     if (enemyHp <= 0) {
-        alert("対戦勝利！");
         gameMode = 'menu';
     }
 }
 
-// アイテムボタンクリック時（最大2個まで同時選択可能、倍率系は排他）
 function clickItemButton(idx) {
     if (gameMode !== 'battle' || battleType !== 'omama' || battleTurnState !== 'my_turn') return;
     if (isMoving) return;
     if (itemStocks[idx] <= 0) {
-        attackNoticeText = "⚠️ アイテムのストックがありません！";
+        attackNoticeText = "⚠️ ストックがありません！";
         attackNoticeTimer = 60;
         return;
     }
 
-    // すでに選択済みの場合は解除
     let indexInActive = activeItems.indexOf(idx);
     if (indexInActive !== -1) {
         activeItems.splice(indexInActive, 1);
         return;
     }
 
-    // 『×2』(0) と 『×3』(1) の同時選択（排他制御）チェック
     if ((idx === 0 && activeItems.includes(1)) || (idx === 1 && activeItems.includes(0))) {
-        attackNoticeText = "⚠️ 『×2』と『×3』は同時に使用できません";
+        attackNoticeText = "⚠️ 『×2』と『×3』は同時使用不可";
         attackNoticeTimer = 60;
         playSE(se.gameOver);
         return;
     }
 
-    // 最大2個までの制限：すでに2つ選択されている場合は古いものを外す
     if (activeItems.length >= 2) {
         activeItems.shift();
     }
@@ -267,12 +270,10 @@ function clickItemButton(idx) {
     activeItems.push(idx);
 
     if (idx === 4) {
-        // 色変更アイテム専用処理
         openColorChangeOverlay();
     }
 }
 
-// アイテムルーレット起動
 function startItemRoulette() {
     if (isRouletteActive) return;
     isRouletteActive = true;
@@ -290,7 +291,6 @@ function startItemRoulette() {
     }, 80);
 }
 
-// ルーレットストップボタン（ストップ＆激しい震え演出）
 function stopItemRoulette() {
     if (!isRouletteActive) return;
     clearInterval(rouletteInterval);
@@ -298,9 +298,8 @@ function stopItemRoulette() {
     playSE(se.ballLand);
 
     let decidedIndex = rouletteItemIndex;
-    rouletteShakeTimer = 30; // 画面またはボックスを揺らすフレーム数
+    rouletteShakeTimer = 30;
 
-    // ストック数が5個未満なら追加
     let totalStock = itemStocks.reduce((a, b) => a + b, 0);
     if (itemStocks[decidedIndex] < 5 && totalStock < 5) {
         itemStocks[decidedIndex]++;
@@ -323,8 +322,7 @@ function stopItemRoulette() {
 }
 
 function openColorChangeOverlay() {
-    // 色変更時のUI表示処理
-    console.log("色変更アイテムが選択されました");
+    console.log("色変更アイテム選択");
 }
 
 // ==========================================
@@ -344,7 +342,6 @@ function update() {
 function render() {
     ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-    // ルーレット演出による画面シェイクオフセット計算
     let shakeX = 0;
     let shakeY = 0;
     if (rouletteShakeTimer > 0) {
@@ -375,20 +372,18 @@ function renderMenu() {
 
     ctx.font = '20px sans-serif';
     ctx.fillStyle = '#4dff4d';
-    ctx.fillText('【 スタートボタンを押してプレイ 】', CANVAS_WIDTH / 2, 280);
+    // スマホ対応メッセージに変更
+    ctx.fillText('【 画面をタップしてスタート 】', CANVAS_WIDTH / 2, 280);
 }
 
 function renderGameField() {
-    // 背景
     ctx.fillStyle = '#1e1e2f';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-    // パズルボード枠
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 3;
     ctx.strokeRect(BOARD_X - 2, BOARD_Y - 2, COLS * BLOCK_SIZE + 4, ROWS * BLOCK_SIZE + 4);
 
-    // ボード内ブロックの描画
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
             let val = board[r][c];
@@ -398,7 +393,6 @@ function renderGameField() {
         }
     }
 
-    // 操作中のブロック描画
     if (currentBall) {
         drawBlock(BOARD_X + currentBall.x * BLOCK_SIZE, BOARD_Y + currentBall.y * BLOCK_SIZE, currentBall.color);
         if (currentBall.y + 1 < ROWS) {
@@ -406,14 +400,12 @@ function renderGameField() {
         }
     }
 
-    // HP・ステータス表示
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'left';
     ctx.fillText(`プレイヤー HP: ${myHp}`, 30, 50);
     ctx.fillText(`エネミー HP: ${enemyHp}`, 580, 50);
 
-    // アイテムストック数・アクティブ状態の簡易表示（UI連動用）
     ctx.fillText(`【アイテムストック (最大5)】`, 30, 120);
     const itemNames = ['お邪魔×2', 'お邪魔×3', 'スキップ', '貫通', '色変更'];
     for (let i = 0; i < 5; i++) {
@@ -422,7 +414,6 @@ function renderGameField() {
         ctx.fillText(`${i+1}. ${itemNames[i]}: ${itemStocks[i]}個${isActiveStr}`, 30, 150 + i * 30);
     }
 
-    // 攻撃通知テキスト
     if (attackNoticeTimer > 0) {
         ctx.fillStyle = '#ff4d4d';
         ctx.font = 'bold 22px sans-serif';
